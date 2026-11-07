@@ -126,7 +126,7 @@ These hooks complement process-group shutdown: submitted hypervisor jobs can sur
 | `libvirt` | Linux + KVM | qcow2 overlays on a root volume: the base, or for headless VMs `boxery-stock.qcow2` (`BOXERY_STOCK_VOL`, the cloud image as downloaded, uploaded on the first headless `new`). An image has its VM's root; `build-base` only refuses while desktop VMs or images use the base. Images are `$PREFIX$IMAGE.qcow2`. Capture = shallow live `blockcopy` + `domfsfreeze` through the guest agent (no pause; a stopped VM is booted `--paused` for the copy). New-from-image = overlay on the image + `blockpull --base`, so every disk is one overlay deep on the base. Disks are attached with `discard=unmap`, so space the guest frees (Ubuntu mounts root with online discard; `fstrim` weekly) leaves the overlay instead of being copied into every image, fork and reimage made from it. Domains made before this get it from `init`, effective on their next cold start (stop + start, revert, lease reset). Guest isolation: every interface on `BOXERY_NET` references the nwfilter `boxery-guest-isolation` (no spoofing, DHCP/DNS only to the host, private ranges dropped; the cloud-hypervisor policy). `init` (re)defines the filter and adds it to existing domains; `new`, `start`, `reimage` and `resize` add it before booting, so older domains get it on their next cold start. `BOXERY_NET_ISOLATION=off` removes it the same way. Measured: capture ~1 s, fork into 2 running VMs ~17 s, 3 VMs with a 3 GiB working set ~23 s |
 | `lima` | macOS (vz) or Linux (qemu) | Headless VMs are fresh instances of Lima's `ubuntu-24.04` template, not clones of the base. Images: stopped Lima instances `boxery-img.<hash>`, made with `limactl clone` (copy-on-write on APFS/btrfs). Lima only clones stopped instances, so capture stops a running VM briefly. Works on `vz`, unlike Lima's own snapshots. Lima maps the guest's gateway to the host's loopback, so on macOS every start runs under `sandbox-exec` with a profile that lets the host agent reach only the proxy and the instance's ssh port on `127.0.0.1` (pinned with `--ssh-port`; confined qemu instances use slirp's DNS, `--dns 192.168.5.3`). `BOXERY_LIMA_CONFINE=0` turns it off |
 | `cloud-hypervisor` | Linux + KVM | **Experimental.** qcow2 overlays on the base, or for headless VMs on `$BOXERY_CH_DIR/stock.qcow2` (a copy of the cloud image); images are `$BOXERY_CH_DIR/images/IMAGE.qcow2`. Capture = guest `sync`, pause (v54 drains and flushes qcow2 metadata), reflink copy of the overlay, resume. New-from-image and reimage = reflink copy of the image. See [below](#cloud-hypervisor-experimental) |
-| `exe` | anywhere with ssh ([exe.dev](https://exe.dev)) | **Experimental.** Headless VMs are new exeuntu VMs (`exe.dev new`), not copies of the base. Images: paused exe.dev VMs made with `cp` (a copy boots fresh from disk), named `PREFIXi-HASH`, with the image name in the exe.dev comment. Reimage = `cp` to a new exe.dev name, then `rm` the old one (names are never reused). See [below](#exe-experimental) |
+| `exe` | anywhere with ssh ([exe.dev](https://exe.dev)) | Headless VMs are new exeuntu VMs (`exe.dev new`), not copies of the base. Images: paused exe.dev VMs made with `cp` (a copy boots fresh from disk), named `PREFIXi-HASH`, with the image name in the exe.dev comment. Reimage = `cp` to a new exe.dev name, then `rm` the old one (names are never reused). See [below](#exe) |
 | `boat` | anywhere with ssh ([boat.dev](https://boat.dev)) | **Experimental.** No headless VMs yet. Images: boat saved snapshots named `PREFIXi-HASH` (exact, independent disk copies of a running sandbox), the image name kept in `$BOXERY_BOAT_DIR/images/`. New-from-image = a sandbox `from` the snapshot. Reimage = a new sandbox from the image, then delete the old one. See [below](#boat-experimental) |
 | `fake` | tests | directories |
 
@@ -221,7 +221,7 @@ Known gaps:
 - Other firewalls with a FORWARD drop policy block guest traffic: Docker (allow `bxch*` in `DOCKER-USER`), ufw (`DEFAULT_FORWARD_POLICY`), firewalld.
 - `net.ipv4.ip_forward=1` is host-wide, so the host also routes between its other interfaces.
 
-## exe (experimental)
+## exe
 
 Runs VMs on [exe.dev](https://exe.dev) instead of local KVM, so the host can be any machine with ssh (a Mac works). Everything goes through exe.dev's ssh API (`ssh exe.dev CMD --json`); the host needs an exe.dev account whose key ssh offers first, or `BOXERY_EXE_KEY`. Verified end to end on a Personal-plan account (November 2026): build, new, snapshots, revert, fork, `new --from`, stop/start, resize, rm; and again on 2026-11-04 on both host OSes, below.
 
@@ -272,12 +272,12 @@ Found and fixed in these runs: a failed revert finished later by recovery (#169)
 Not verified yet:
 - Work-plan pools (`BOXERY_EXE_POOL`): the account is Personal, which has no pools. What `billing plan` reports for a pool VM's limit is unknown too.
 - A host reboot on macOS (launchd).
-- The integration guard refusing a VM live (it was checked against the fake exe.dev; on the live account, `llm` was already detached and nothing else that holds credentials was attached).
+- The integration warning firing live (it was checked against the fake exe.dev; on the live account, `llm` was already detached and nothing else that holds credentials was attached).
 
 Not supported:
 - No HTTPS (`POST /exec`) transport: its 30 s limit is too short for `cp`, `new` and the build, and the tunnels need ssh anyway.
 
-Scorecard against [what stable means](#what-stable-means-for-a-backend) (2026-11-04, after the live runs above; lines marked "with #N" pass once that PR is merged):
+Scorecard against [what stable means](#what-stable-means-for-a-backend) (2026-11-04, after the live runs above; every PR it names is merged, so exe is stable):
 
 | # | | exe | Evidence and what's left |
 |---|---|---|---|
@@ -286,12 +286,12 @@ Scorecard against [what stable means](#what-stable-means-for-a-backend) (2026-11
 | 3 | Declaration | pass | `tested`: macOS arm64 and Linux arm64 (2026-11-04). No x64 host was tried |
 | 4 | Live: e2e | pass | Both host OSes, on current code (table above). The gaps came from the test hosts, not exe: no ollama on either, no LLM provider on the Linux host (those checks were done by hand there) |
 | 5 | Live: lifecycle | pass | Every item on both hosts, and `BOXERY_EXE_EGRESS`. `BOXERY_EXE_POOL` (Work plans only) stays listed as unverified |
-| 6 | Live: interruptions | pass | Creates killed at four points and a capture: every copy that landed was removed by `reconcile`, and none landed later. Needs #169 |
+| 6 | Live: interruptions | pass | Creates killed at four points and a capture: every copy that landed was removed by `reconcile`, and none landed later (with #169) |
 | 7 | Live: host reboot | pass | Linux (systemd, linger): tunnels back 21 s after the reboot, no login. macOS: not tried; LaunchAgents load at login, which the docs now say |
-| 8 | Security | pass with #167 | exe.dev integrations are the owner's to use: `init`, `new`, `start` and reimages warn about each credential one that reaches a VM, with the detach command. New accounts attach `llm` to every VM, so until it's detached agents can use the account's LLM credits without a grant |
-| 9 | Security notes | pass with #167 | `docs/security.md` has the exe.dev entry |
-| 10 | Docs | pass with #168, #178 | Sizes fixed in #168, live results above. An always-on host is a declared requirement and `init` warns on a battery (#178, deciding [#42](https://github.com/modem-dev/boxery/issues/42)) |
-| 11 | One answer | pass | Experimental everywhere it's stated |
+| 8 | Security | pass (#167) | exe.dev integrations are the owner's to use: `init`, `new`, `start` and reimages warn about each credential one that reaches a VM, with the detach command. New accounts attach `llm` to every VM, so until it's detached agents can use the account's LLM credits without a grant |
+| 9 | Security notes | pass (#167) | `docs/security.md` has the exe.dev entry |
+| 10 | Docs | pass (#168, #178) | Sizes fixed in #168, live results above. An always-on host is a declared requirement and `init` warns on a battery (#178, deciding [#42](https://github.com/modem-dev/boxery/issues/42)) |
+| 11 | One answer | pass | Stable everywhere it's stated |
 
 ## boat (experimental)
 

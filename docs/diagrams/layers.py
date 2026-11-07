@@ -7,15 +7,15 @@ from pathlib import Path
 from parts import THEMES, Diagram
 
 HERE = Path(__file__).parent
-W = 680
+W = 772
 
 # Backends left to right, each with the one thing it's best at and whether it's experimental (both from
 # docs/install.md#choosing-a-backend), and its column width, sized to its longest label.
 BACKENDS = [("Lima", "local", False, 88), ("libvirt", "fastest", False, 74),
             ("Cloud Hypervisor", "minimal", True, 108), ("OpenShell", "restricted", True, 80),
-            ("exe.dev · boat", "no hardware", True, 84)]
+            ("exe.dev", "no hardware", False, 84), ("boat", "no hardware", True, 84)]
 # Each platform is a panel around its backends' columns: (name, first column, last column)
-PLATFORMS = [("macOS", 0, 0), ("Linux", 1, 3), ("Cloud", 4, 4)]
+PLATFORMS = [("macOS", 0, 0), ("Linux", 1, 3), ("Cloud", 4, 5)]
 LAYERS = ["Manager", "VMM", "Hypervisor", "Hardware"]
 
 # (first layer, last layer, first column, last column, title, subtitle lines, kind). Subtitles only fit
@@ -33,8 +33,8 @@ CELLS = [
     (0, 0, 3, 3, "gateway", [], "card"),
     (1, 2, 3, 3, "container", ["no VM: shares", "the host kernel"], "none"),
     (3, 3, 1, 3, "Linux machine", [], "card"),
-    (0, 0, 4, 4, "API", [], "card"),
-    (1, 3, 4, 4, "hidden", ["on their", "servers"], "none"),
+    (0, 0, 4, 5, "API", [], "card"),
+    (1, 3, 4, 5, "hidden", ["on their", "servers"], "none"),
 ]
 
 LABEL_X, GRID_X = 40, 126
@@ -120,7 +120,7 @@ DESC = (
     "Virtualization.framework, on the macOS kernel's hypervisor, on Apple silicon. On Linux: libvirt (fastest) "
     "manages QEMU; Cloud Hypervisor (minimal, experimental) is managed by boxery itself, with a systemd unit per VM; "
     "both run on KVM in the Linux kernel. OpenShell (restricted, experimental) goes through its gateway to a "
-    "container that shares the host kernel, with no VM. In the cloud, exe.dev and boat (no hardware, experimental) "
+    "container that shares the host kernel, with no VM. In the cloud, exe.dev and boat (experimental), with no hardware, "
     "are reached through their API, and the rest runs on their servers."
 )
 

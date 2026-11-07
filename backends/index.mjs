@@ -52,8 +52,8 @@ export const BACKENDS = {
 		capabilities: { ...capabilities(), resize: no("cloud-hypervisor has no resize; create a new VM with the size you need") },
 	},
 	exe: {
-		id: "exe", stability: "experimental", supported: both,
-		// Live runs 2026-11-04 (host/backends/README.md#exe-experimental). No x64 host yet.
+		id: "exe", stability: "stable", supported: both,
+		// Live runs 2026-11-04, promoted against the stable bar (host/backends/README.md#exe). No x64 host yet.
 		tested: [tested("darwin", "arm64", "exe.dev"), tested("linux", "arm64", "exe.dev")], runtime: { location: "remote", default: "exe.dev", options: ["exe.dev"] },
 		requirements: [...tools(["ssh", "jq", "nc", "node", "openssl"]), manual("exe.dev account with registered SSH key (ssh exe.dev, or BOXERY_EXE_KEY)"),
 			manual("Always-on boxery-host (a server or a desktop that doesn't sleep; laptops as controllers): VMs reach the LLM proxy only through its tunnels")],
