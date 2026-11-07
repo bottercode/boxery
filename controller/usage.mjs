@@ -90,6 +90,22 @@ Agents: prefer the vm_* tools (boxery-mcp or the pi extension): ${DOCS}mcp.md
 `;
 }
 
+/** The command reference in docs/cli.md (scripts/docs-cli.mjs writes it between its markers). @param {Record<string, HelpEntry>} table */
+export function renderMarkdown(table) {
+	const cell = (/** @type {string} */ s) => s.replaceAll("|", "\\|");
+	const entries = Object.entries(table).flatMap(([n, e]) => (e.help ? [/** @type {[string, Help]} */ ([n, e.help])] : []));
+	const aliases = Object.entries(table).flatMap(([n, e]) => (e.alias ? [[n, e.alias]] : []));
+	const sections = Object.entries(GROUPS).flatMap(([g, title]) => {
+		const rows = entries.filter(([, h]) => h.group === g).map(([n, h]) => {
+			const also = aliases.filter(([, t]) => t === n).map(([a]) => ` (also: \`${a}\`)`).join("");
+			const link = h.docs ? ` [→](${h.docs.startsWith("cli.md#") ? h.docs.slice(6) : h.docs})` : "";
+			return `| ${h.usage.map((u) => `\`boxery ${cell(u)}\``).join("<br>")} | ${cell(sentence(h.summary))}${also}${link} |`;
+		});
+		return rows.length ? [`**${title}**\n\n| Command | What it does |\n|---|---|\n${rows.join("\n")}`] : [];
+	});
+	return `${sections.join("\n\n")}\n`;
+}
+
 /** `boxery COMMAND --help`. @param {string} name @param {Help} h */
 export function renderCommand(name, h) {
 	const out = [`${bold("Usage:")}\n${h.usage.map((u) => `  boxery ${u}`).join("\n")}`, `${sentence(h.summary)}.`];

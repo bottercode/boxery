@@ -144,6 +144,12 @@ test("no module keeps its own usage text", () => {
 	}
 });
 
+test("docs/cli.md's command reference is up to date (npm run docs:cli)", async () => {
+	const { rendered } = await import("../scripts/docs-cli.mjs");
+	const { text, next } = await rendered();
+	assert.ok(text === next, "docs/cli.md: the command reference is out of date; run: npm run docs:cli");
+});
+
 const golden = path.join(ROOT, "test/fixtures/boxery-help.txt");
 test("boxery help matches test/fixtures/boxery-help.txt (BOXERY_UPDATE_GOLDEN=1 rewrites it)", () => {
 	const home = mkdtempSync(path.join(tmpdir(), "boxery-help-"));
