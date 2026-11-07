@@ -1,95 +1,127 @@
-// The controller's usage text (boxery help). Kept as text: tests match parts of it, and people read it.
-export const USAGE = `boxery — remote desktop VMs for coding agents
+// The controller's help (boxery help, boxery COMMAND --help), rendered from the command table in cli.mjs:
+// each command's `help` sits next to its handler, so the list, the per-command pages and the usage line
+// all come from one place. Nothing here knows a command by name.
 
-setup user@host|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]
-setup local --backend openshell [--gateway G] [--image OCI] [--policy PATH] [--provider P | --no-providers] [--yes]
-                                configure a VM host (local = this machine) + register your ssh key;
-                                  NAME defaults to local / the host part of user@host
---host NAME COMMAND             route a command to a host other than the default
-host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B] [--profile P]
-                                --backend B: create a new profile on DEST for backend B (own state,
-                                  free proxy port, own services); --profile P: use an existing one
-host add NAME --config-dir DIR   import existing config/ssh_config without setup
-host ls [--json] | show NAME | use NAME | rm NAME
-                                ls: where each host runs (local or ssh destination) and its backend
-new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless] [--grant SPEC]... [--agent-forward]
-                                --headless: no desktop (shell + agents only); needs no build-base
-                                --headless --layers github-runner: a GitHub Actions runner VM
-build-base                      build the host's desktop base image (one-time, ~3 min)
-backends [--json]               backend support, requirements and capabilities (on selected host)
-capabilities [--json | --check]  selected host's platform and conditional capability assessment
-shapes [--json]                 VM sizes defined on the host (* = default; see docs/shapes.md)
-ls [--json] [--refresh]         list VMs (with their shape, grants and guest software: GUEST is
-                                  current, outdated or unknown; --refresh reads it from running VMs)
-patch NAME|--all [--wait S]     update a VM's guest software to the host's image layers (security
-                                  updates, browsers, agent CLIs; restarts it if they ask to). A pool
-                                  VM must be free (--wait S for its lease to end); its clean image is
-                                  captured again. Snapshots keep their old software
-rm NAME                         destroy VM (revokes its LLM token)
-start|stop NAME
-resize NAME [--cpus N] [--mem MiB] [--disk GiB]
-                                change a VM's size (restarts it if running; disk only grows)
-fork SRC DST... [--grants] [--shape S]
-                                copy a VM (running or not) into new VMs, ~10 s; each gets its own
-                                identity and SRC's size (--grants: give the forks SRC's grants too)
-snap NAME [SNAP] | snaps NAME [--json] | revert NAME SNAP | snap-rm NAME SNAP
-new NAME --from NAME@SNAP       new VM from a snapshot (also: boxery images)
-pin NAME [--from-guest]         re-pin a VM's ssh host key (VMs from before keys were pinned; see
-                                  docs/security.md). --from-guest: trust what it answers once
+const DOCS = "https://github.com/modem-dev/boxery/blob/master/docs/";
 
-ssh NAME [cmd...]               shell into VM (also: ssh NAME.boxery)
-cp FROM TO                      copy a file or directory (recursive) between this machine and VMs,
-                                  or VM to VM; same locations as vm_copy: local:PATH, NAME:PATH,
-                                  HOST/NAME:PATH (VM paths relative to ~/project); bare PATH = local
-run [--bg] NAME [--cwd DIR] CMD [ARG...]
-                                run a command with exactly these args (like docker exec), in
-                                  ~/project; a relative --cwd is under ~/project
-                                --bg: run it as a background job (prints the job id)
-jobs NAME [--json]              list background jobs (state, exit code, start time, command)
-jobs NAME --prune [--older-than 7d]   delete finished jobs and their logs
-logs NAME JOB [-f] [--strip-ansi] [--lines N] [--bytes N]
-                                tail a job's output (last 200 lines); -f follows until it ends
-wait NAME JOB [--timeout S] [--json]
-                                wait; exits with the job's exit code (124 timed out, 125 lost)
-kill NAME JOB [--grace S] [--json]
-                                stop a job: SIGTERM, then SIGKILL after S seconds (default 5)
-attach NAME [pi|opencode|shell] [session]
-                                attach to a persistent tmux session running the agent
-prompt NAME "task"              start a headless pi task in the background
-sessions NAME [--json]          list tmux sessions
-desktop NAME [--no-open]        open the XFCE desktop in your browser (noVNC over ssh)
-forward NAME PORT [LOCAL]       forward a VM port to localhost
-acquire [--ttl S] [--wait S]    lease a VM from the shared pool (prints NAME LEASE_ID)
-renew NAME [--ttl S]            extend your lease;  release NAME   give it back (VM is reset)
-leases [--json]                 your leases;  pool add|rm|ls (admin, on the host)
-runners once [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]
-                                local runner: one GitHub Actions job on a fresh pool VM, registered
-                                  with your gh login; nothing is stored on the host. --repo
-                                  defaults to this directory's repo (docs/github-runners.md)
-runners status|start|stop|config|token   host runners: the host keeps runners waiting, with
-                                  its own GitHub token (admin)
-grant NAME SPEC... [--cmd CMD]  give a VM access to something on this machine:
-                                  ssh-agent | env:VAR | file:LOCAL[=REMOTE]
-                                  http:HOST --cmd CMD [--auth bearer|basic:USER|header:NAME] [--readonly]
-                                  github [--readonly]   (http: grants never put the secret in the VM)
-                                  llm:chatgpt|openai|anthropic|ollama   (LLM access; none without it)
-revoke NAME SPEC...|all         take it away (pushed values are deleted from the VM)
-grants NAME [apply | --json]    show grants / push them again
-agent-forward NAME on|off       same as grant/revoke NAME ssh-agent
-proxy-log [N]                   recent LLM + edge (http: grant) requests on the host
-version [--json]                controller and host versions; warns when the host is behind
-backend                         the host's VM backend (recorded for host ls / vm_info hosts)
-upgrade-host [--check] [--ref REF] [--wait S]
-                                update boxery on the host and restart its services (waits for
-                                in-flight VM operations; rolls back if checks fail)
+/** Sections of `boxery help`, in order. */
+export const GROUPS = /** @type {const} */ ({
+	setup: "Setup & hosts",
+	vms: "VMs",
+	snapshots: "Snapshots & images",
+	use: "Work in a VM",
+	jobs: "Background jobs",
+	access: "Access (grants)",
+	pool: "Shared pool & runners",
+	admin: "Host & diagnostics",
+});
 
---json on ls, snaps, sessions, leases, grants, jobs, wait, kill prints JSON (fields: docs/cli.md)
+/**
+ * A command's help. `usage` lines omit the leading "boxery "; the first one, without its [--flag] groups,
+ * is the command's line in `boxery help` unless `list` says otherwise.
+ * @typedef {object} Help
+ * @property {keyof typeof GROUPS} group
+ * @property {string[]} usage
+ * @property {string} summary   one line, for the list
+ * @property {string} [list]    the list's left column, when usage[0] without its flags doesn't fit
+ * @property {string[]} [details]   paragraphs for COMMAND --help
+ * @property {[string, string][]} [flags]   [flag with its value, what it does]
+ * @property {[string, string][]} [examples]   [comment, command line]
+ * @property {string[]} [seeAlso]
+ * @property {string} [docs]    page#anchor under docs/
+ */
+/** @typedef {{ help?: Help, alias?: string }} HelpEntry */
 
+const tty = () => !!process.stdout.isTTY && !process.env.NO_COLOR;
+const bold = (/** @type {string} */ s) => (tty() ? `\x1b[1m${s}\x1b[22m` : s);
+const dim = (/** @type {string} */ s) => (tty() ? `\x1b[2m${s}\x1b[22m` : s);
+
+/** usage[0] without its option groups ("[--cwd DIR]", "[--json | --check]"): the command's shape. @param {string} line */
+export function shape(line) {
+	let out = "", depth = 0, skip = -1;
+	for (let i = 0; i < line.length; i++) {
+		const c = line[i];
+		if (c === "[") { if (skip < 0 && line[i + 1] === "-") skip = depth; depth++; if (skip >= 0) continue; }
+		else if (c === "]") {
+			depth--;
+			if (skip >= 0) { if (depth === skip) { skip = -1; if (line.startsWith("...", i + 1)) i += 3; } continue; } // (a repeated flag: [--grant SPEC]...)
+		}
+		else if (skip >= 0) continue;
+		out += c;
+	}
+	return out.replace(/\s+/g, " ").trim();
+}
+
+/** @param {string} name @param {Help} h */
+export const listLine = (name, h) => h.list ?? shape(h.usage[0] ?? name);
+
+/** A summary as the start of a sentence. @param {string} s */
+const sentence = (s) => s.replace(/^./, (c) => c.toUpperCase());
+
+/** Two columns: left padded to `width`; a left side longer than that keeps two spaces. @param {[string, string][]} rows @param {number} width */
+function columns(rows, width, indent = "  ") {
+	return rows.map(([l, r]) => `${indent}${l.length > width ? `${l}  ` : l.padEnd(width + 2)}${r}`).join("\n");
+}
+
+/** `boxery help`. @param {Record<string, HelpEntry>} table */
+export function renderTop(table) {
+	const entries = Object.entries(table).flatMap(([n, e]) => (e.help ? [/** @type {[string, Help]} */ ([n, e.help])] : []));
+	const width = 28;
+	const sections = Object.entries(GROUPS).flatMap(([g, title]) => {
+		const rows = entries.filter(([, h]) => h.group === g).map(([n, h]) => /** @type {[string, string]} */ ([listLine(n, h), sentence(h.summary)]));
+		return rows.length ? [`${bold(`${title}:`)}\n${columns(rows, width)}`] : [];
+	});
+	return `boxery — remote desktop VMs for coding agents
+
+${bold("Usage:")}
+  boxery [--host NAME] COMMAND [ARGS...]
+
+${sections.join("\n\n")}
+
+${bold("Options:")}
+${columns([
+		["--host NAME", "Run COMMAND on a host other than the default (boxery host use)"],
+		["--json", "JSON output on listings (fields: docs/cli.md#json-output)"],
+		["-h, --help", "Show help; boxery COMMAND --help shows a command's"],
+	], width)}
+
+Docs: ${DOCS}cli.md
+Agents: prefer the vm_* tools (boxery-mcp or the pi extension): ${DOCS}mcp.md
 `;
+}
 
-export const RUN_EXAMPLES = `run examples:
-  boxery run demo pnpm test                       args are passed as-is: quotes, $, *, ; stay literal
-  boxery run demo --cwd modem git log -1          runs in ~/project/modem
-  boxery run demo bash -c 'ls ~ | wc -l; echo $HOME'   pipes, ~, $VAR and globs need bash -c
-  not: boxery run demo 'make test'                one argument is one command name (fails with a hint)
-`;
+/** `boxery COMMAND --help`. @param {string} name @param {Help} h */
+export function renderCommand(name, h) {
+	const out = [`${bold("Usage:")}\n${h.usage.map((u) => `  boxery ${u}`).join("\n")}`, `${sentence(h.summary)}.`];
+	if (h.details?.length) out.push(h.details.join("\n\n"));
+	if (h.flags?.length) out.push(`${bold("Options:")}\n${columns(h.flags, Math.min(24, Math.max(...h.flags.map(([f]) => f.length))))}`);
+	if (h.examples?.length) out.push(`${bold("Examples:")}\n${h.examples.map(([c, l]) => `  ${dim(`# ${c}`)}\n  ${l}`).join("\n\n")}`);
+	const more = [h.seeAlso?.length ? `See also: ${h.seeAlso.map((c) => `boxery ${c}`).join(", ")}` : "", h.docs ? `Docs: ${DOCS}${h.docs}` : ""].filter(Boolean);
+	if (more.length) out.push(more.join("\n"));
+	return `${out.join("\n\n")}\n`;
+}
+
+/** The command NAME means (an alias's target), or null. @param {Record<string, HelpEntry>} table @param {string} name */
+export function resolve(table, name) {
+	if (!Object.hasOwn(table, name)) return null;
+	const e = table[name];
+	return e.alias ? (Object.hasOwn(table, e.alias) ? e.alias : null) : name;
+}
+
+/** "unknown command", with the nearest command when there is a close one. @param {Record<string, HelpEntry>} table @param {string} word */
+export function unknownCommand(table, word) {
+	const names = Object.keys(table).filter((n) => !n.startsWith("__"));
+	const near = names.map((n) => /** @type {const} */ ([n, distance(word, n)])).filter(([n, d]) => d <= Math.max(1, Math.floor(n.length / 3)) || (word.length >= 3 && n.startsWith(word))).sort((a, b) => a[1] - b[1])[0];
+	return `unknown command: ${word}${near ? ` (did you mean ${near[0]}?)` : ""}; see: boxery help`;
+}
+
+/** Levenshtein distance. @param {string} a @param {string} b */
+function distance(a, b) {
+	let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+	for (let i = 1; i <= a.length; i++) {
+		const row = [i];
+		for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+		prev = row;
+	}
+	return prev[b.length];
+}

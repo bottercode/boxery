@@ -8,6 +8,8 @@
 
 ## `boxery` (your laptop)
 
+`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
+
 ### Named hosts
 
 ```bash

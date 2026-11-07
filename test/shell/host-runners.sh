@@ -59,7 +59,7 @@ echo "== controller passthrough"
 "$A" setup local --host-bin "$H" >/dev/null 2>&1 || bad "setup local"
 out=$("$A" runners status 2>&1) && [[ $out == *"repo o/r"* ]] && ok "boxery runners status reaches the host" || bad "controller: $out"
 out=$(printf '%s\n' "$TOKEN" | "$A" runners token 2>&1) && grep -qx "GITHUB_TOKEN=$TOKEN" "$BOXERY_CONF/runners.env" && ok "boxery runners token passes stdin through" || bad "controller token: $out"
-"$A" help | grep -q 'runners status|start|stop|config|token' && ok "controller usage lists runners" || bad "controller usage"
+"$A" help | grep -q '^  runners once|status' && ok "controller usage lists runners" || bad "controller usage"
 out=$("$A" new hr --layers 'bad;x' 2>&1) && bad "a bad --layers value passed on" || { [[ $out == *"invalid layer list"* ]] && ok "controller checks --layers before calling the host" || bad "controller --layers: $out"; }
 
 echo "== guest layer: image/layers/github-runner.sh"

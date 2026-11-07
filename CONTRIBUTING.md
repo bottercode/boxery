@@ -20,6 +20,8 @@ Types: the code is plain JavaScript typed with JSDoc comments (`/** @param {stri
 
 `test/parity.test.mjs` keeps the CLI and the agent tools in step: a new `vm_*` tool or action, or a new `boxery` command, fails it until it is mapped to its counterpart or listed with a reason it has none. When both sides need a feature, give the CLI the tool's implementation rather than a second one (as `boxery cp` runs `vm_copy`).
 
+`boxery help` and `boxery COMMAND --help` are rendered (`controller/usage.mjs`) from the `help` each command carries in `controller/cli.mjs`'s `COMMANDS` table, next to its handler: a new command needs its help to exist at all. Write the summary as one short line; longer explanations go in `details`, `flags` and `examples`, which only its own `--help` shows.
+
 `test/frontends.test.mjs` does the same for the two agent front-ends, the MCP server and the pi extension: both must list exactly the shared tool table in `core/boxery-tools.mjs`. Put a new tool or action in the table (with its `run`), not in one front-end; something only one of them can offer goes in that test's `MCP_ONLY` or `PI_ONLY` with the reason.
 
 `test/grants.test.mjs` exercises the actual CLI with no controlling terminal and with a real PTY (`test/fixtures/grant-pty.py`, Python standard library only), plus in-process approvals, shared prompt text, config-only automation and deny-directory parity. Its profiles, stores and transport effects are temporary; it never grants access to a real VM.
