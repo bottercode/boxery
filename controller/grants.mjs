@@ -8,7 +8,7 @@ import { formatGrants, hostBackend } from "../core/boxery-core.mjs";
 import { parseGrantArgs } from "../core/grant-approval.mjs";
 import { addGrants, applyGrants, grantCommand, grantPrompt, listGrants, revokeGrants, storedSpecs } from "../core/grants.mjs";
 import { reapplyPushed } from "../core/grant-operations.mjs";
-import { CliError, VALID_VM, die, needHost, needVm, note, say, warn } from "./lib.mjs";
+import { CliError, VALID_VM, die, needHost, needVm, note, say, usage, warn } from "./lib.mjs";
 /** @import { GrantSpec } from "../core/boxery-core.mjs" */
 /** @import { Selected } from "./lib.mjs" */
 
@@ -100,16 +100,16 @@ export async function grantsCommand(s, [vm, sub, flag]) {
 			else say(out);
 		} else if (sub === "--json") say(JSON.stringify(listGrants(vm)));
 		else if (sub === undefined) say(formatGrants(vm, listGrants(vm)));
-		else die("usage: boxery grants NAME [apply [--quiet] | --json]");
+		else usage("grants");
 	} catch (e) { if (e instanceof CliError) throw e; die(/** @type {Error} */ (e).message); }
 }
 
 /** agent-forward NAME on|off @param {Selected} s @param {string[]} args */
 export async function agentForward(s, args) {
-	if (args.length !== 2) die("usage: boxery agent-forward NAME on|off");
+	if (args.length !== 2) usage("agent-forward");
 	if (args[1] === "on") return grant(s, [args[0], "ssh-agent"]);
 	if (args[1] === "off") return revoke(s, [args[0], "ssh-agent"]);
-	die("usage: boxery agent-forward NAME on|off");
+	usage("agent-forward");
 }
 
 /** Before a connection that needs them (ssh, attach, run --bg): push VM's pushed grants again (they live in

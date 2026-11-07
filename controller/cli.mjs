@@ -12,8 +12,8 @@ import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
-import { CliError, VALID_SNAP, VALID_VM, commandLine, die, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
-import { renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
+import { CliError, VALID_SNAP, VALID_VM, commandLine, die, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { registerCommands, renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -73,7 +73,7 @@ async function cmdFork(s, args) {
 		else if (a.startsWith("-")) die(`unknown flag ${a}`);
 		else { needVm(a); if (!src) src = a; else dsts.push(a); }
 	}
-	if (!src || !dsts.length) die("usage: boxery fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB] [--grants]");
+	if (!src || !dsts.length) usage("fork");
 	const g = await grants();
 	const approved = copyGrants ? await g.confirmCopy(s, src, dsts) : [];
 	await lc(() => lifecycle.forkVm(src, dsts, { ...size, grants: approved }, passthrough()));
@@ -82,7 +82,7 @@ async function cmdFork(s, args) {
 /** ls [--json] [--refresh] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdLs(s, args) {
 	let json = false, refresh = false;
-	for (const a of args) { if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else die("usage: boxery ls [--json] [--refresh]"); }
+	for (const a of args) { if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else usage("ls"); }
 	needHost(s);
 	if (json) {
 		/** @type {unknown[]} */
@@ -103,7 +103,6 @@ async function cmdPatch(s, args) {
 async function cmdRun(s, args) {
 	let bg = false;
 	if (args[0] === "--bg") { bg = true; args = args.slice(1); }
-	const usage = "usage: boxery run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]   (a shell line: ... bash -c 'A | B'; see: boxery run --help)";
 	if (!args.length || ["-h", "--help"].includes(args[0])) {
 		const h = COMMANDS.run;
 		if ("help" in h) process.stdout.write(renderCommand("run", h.help));
@@ -117,13 +116,13 @@ async function cmdRun(s, args) {
 	/** @type {Buffer} */
 	let cwdRaw = Buffer.alloc(0);
 	for (; i < args.length; i++) {
-		if (args[i] === "--cwd") { if (!args[i + 1]) die(usage); cwd = args[++i]; cwdRaw = raw[i]; }
+		if (args[i] === "--cwd") { if (!args[i + 1]) runUsage(); cwd = args[++i]; cwdRaw = raw[i]; }
 		else if (args[i] === "--bg") bg = true;
 		else if (args[i] === "--") { i++; break; }
 		else break;
 	}
 	const argv = args.slice(i), argvRaw = raw.slice(i);
-	if (!argv.length) die(usage);
+	if (!argv.length) runUsage();
 	if (bg) {
 		await (await grants()).reapplyQuiet(s, name);
 		const { startJob } = await import("./jobs.mjs");
@@ -145,6 +144,9 @@ async function cmdRun(s, args) {
 	literalNote(name, argv);
 	if (rc) throw new CliError("", rc);
 }
+
+/** @returns {never} */
+const runUsage = () => usage("run", { hint: "a shell line: ... bash -c 'A | B'; see: boxery run --help" });
 
 /** run's remote command line as bytes, for arguments that aren't UTF-8: the same line, built from bytes.
  *  @param {Buffer[]} argv @param {Buffer | null} cwd */
@@ -195,7 +197,7 @@ async function cmdDesktop(s, [vm, noOpen]) {
 /** forward NAME PORT [LOCALPORT] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdForward(s, [name = "", rport = "", lport = rport]) {
 	needVm(name);
-	for (const p of [rport, lport]) if (!/^[0-9]{1,5}$/.test(p)) die("usage: boxery forward NAME PORT [LOCALPORT]");
+	for (const p of [rport, lport]) if (!/^[0-9]{1,5}$/.test(p)) usage("forward");
 	say(`==> localhost:${lport} -> ${name}:${rport}  (Ctrl-C to stop)`);
 	await exitWith(vmSsh(s, ["-N", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=yes", "-L", `127.0.0.1:${lport}:127.0.0.1:${rport}`, `${name}.boxery`]));
 }
@@ -206,7 +208,7 @@ async function exitWith(p) { const rc = await p; if (rc) throw new CliError("", 
 async function cmdSessions(s, [vm, flag]) {
 	const name = needVm(vm);
 	if (flag === undefined) return exitWith(vmSsh(s, [`${name}.boxery`, 'tmux ls 2>/dev/null || echo "(no tmux sessions)"']));
-	if (flag !== "--json") die("usage: boxery sessions NAME [--json]");
+	if (flag !== "--json") usage("sessions");
 	const r = await vmSshCapture(s, [`${name}.boxery`, "tmux ls -F '#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}' 2>/dev/null; true"]);
 	if (r.code !== 0) die(`cannot reach ${name}`);
 	const num = (/** @type {string} */ v) => (/^-?[0-9]+$/.test(v) ? Number(v) : null);
@@ -222,7 +224,7 @@ async function cmdSessions(s, [vm, flag]) {
 async function cmdPrompt(s, [name = "", ...words]) {
 	needVm(name);
 	const prompt = words.join(" ");
-	if (!prompt) die('usage: boxery prompt NAME "task..."');
+	if (!prompt) usage("prompt");
 	const d = new Date(), p2 = (/** @type {number} */ n) => String(n).padStart(2, "0");
 	const id = `task-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
 	const b64 = Buffer.from(prompt).toString("base64");
@@ -236,7 +238,7 @@ async function cmdPrompt(s, [name = "", ...words]) {
 
 /** cp FROM TO: vm_copy's own code. Needs only the profile's ssh_config, not the host. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdCp(s, args) {
-	if (args.length !== 2) die("usage: boxery cp FROM TO   (FROM/TO: local:PATH | NAME:PATH | HOST/NAME:PATH | PATH = local)");
+	if (args.length !== 2) usage("cp", { hint: "FROM/TO: local:PATH | NAME:PATH | HOST/NAME:PATH | PATH = local" });
 	for (const a of args) if (a.startsWith("-")) die(`cp takes no options (directories copy recursively); for a local path starting with -, use local:${a}`);
 	const { copy } = await import("./cp.mjs");
 	await copy(s.host, args);
@@ -245,7 +247,7 @@ async function cmdCp(s, args) {
 /** version [--json] @param {Selected | null} s @param {string[]} args */
 async function cmdVersion(s, args) {
 	const json = args[0] === "--json";
-	if (args.length && !json) die("usage: boxery version [--json]");
+	if (args.length && !json) usage("version");
 	const c = controllerVersion(ROOT);
 	let h = null, noteText = null;
 	if (s?.config.host) {
@@ -309,7 +311,7 @@ export const COMMANDS = {
 	},
 	"build-base": {
 		help: { group: "setup", summary: "build the host's desktop base image (one time, ~3 min)", usage: ["build-base"], details: ["Headless VMs (new --headless) don't need it."], docs: "cli.md#lifecycle" },
-		run: async (s, args) => { needHost(s); if (args.length) die("usage: boxery build-base"); await lc(() => lifecycle.buildBase(passthrough())); },
+		run: async (s, args) => { needHost(s); if (args.length) usage("build-base"); await lc(() => lifecycle.buildBase(passthrough())); },
 	},
 
 	// ------------------------------------------------ VMs
@@ -388,13 +390,13 @@ export const COMMANDS = {
 		// Re-pin a VM's ssh host key on the host (a VM made before keys were pinned, or whose record was lost).
 		run: async (s, args) => {
 			needHost(s); const n = needVm(args[0]);
-			if (!["", "--from-guest"].includes(args[1] ?? "") || args.length > 2) die("usage: boxery pin NAME [--from-guest]");
+			if (!["", "--from-guest"].includes(args[1] ?? "") || args.length > 2) usage("pin");
 			await lc(() => lifecycle.pinVm(n, { fromGuest: args[1] === "--from-guest" }, passthrough()));
 		},
 	},
 	shapes: {
 		help: { group: "vms", summary: "VM sizes defined on the host (* = default)", usage: ["shapes [--json]"], flags: [JSON_FLAG], docs: "shapes.md" },
-		run: async (s, args) => { needHost(s); if (!(args.length === 0 || (args.length === 1 && args[0] === "--json"))) die("usage: boxery shapes [--json]"); await hostPass(s, ["shapes", ...args]); },
+		run: async (s, args) => { needHost(s); if (!(args.length === 0 || (args.length === 1 && args[0] === "--json"))) usage("shapes"); await hostPass(s, ["shapes", ...args]); },
 	},
 
 	// ------------------------------------------------ snapshots
@@ -419,7 +421,7 @@ export const COMMANDS = {
 		help: { group: "snapshots", summary: "delete a snapshot", usage: ["snap-rm NAME SNAP"] },
 		run: async (s, args) => {
 			needHost(s);
-			if (!args[1] || !VALID_SNAP.test(args[1])) die("usage: boxery snap-rm NAME SNAP");
+			if (!args[1] || !VALID_SNAP.test(args[1])) usage("snap-rm");
 			await lc(() => lifecycle.snapRm(needVm(args[0]), args[1], passthrough()));
 		},
 	},
@@ -609,6 +611,7 @@ export const COMMANDS = {
 
 /** Commands handled before a host is selected. */
 export const PRE_HOST = Object.keys(COMMANDS).filter((n) => "preHost" in COMMANDS[n]);
+registerCommands(COMMANDS);
 
 // ---------------------------------------------------------------- dispatch
 
@@ -619,7 +622,7 @@ async function main(argv) {
 	if (/[\n\t\r]/.test(BOXERY_HOME)) die("paths cannot contain line breaks or tabs");
 	let explicit = "", pinned = "";
 	if (argv[0] === "--host") {
-		if (argv.length < 3) die("usage: boxery --host NAME COMMAND");
+		if (argv.length < 3) die("usage: boxery --host NAME COMMAND [ARGS...]");
 		explicit = argv[1];
 		if (!explicit) die("invalid host name");
 		argv = argv.slice(2);
@@ -634,7 +637,8 @@ async function main(argv) {
 	if (["help", "-h", "--help"].includes(word)) return showHelp(args[0]);
 	const cmd = word.startsWith("__") ? word : resolve(COMMANDS, word);
 	if (cmd === null) throw new CliError(unknownCommand(COMMANDS, word), 2);
-	if (["-h", "--help"].includes(args[0] ?? "")) return showHelp(cmd);
+	// (COMMAND SUB --help too: host add --help, runners once --help. Not after run's own options or CMD.)
+	if (["-h", "--help"].includes(args[0] ?? "") || (cmd !== "run" && cmd !== "ssh" && args.length === 2 && /^[a-z]+$/.test(args[0]) && ["-h", "--help"].includes(args[1]))) return showHelp(cmd);
 	if (cmd === "host") { if (explicit) die("--host does not apply to host management"); return hostCommand(args); }
 	if (cmd === "setup") { if (explicit) die("setup takes --name NAME, not --host"); return setupNamed(args); }
 	// Internal (tests): __skew CTL_VERSION CTL_DESCRIBE HOST_VERSION HOST_DESCRIBE [HOST_NAME]

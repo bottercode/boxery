@@ -101,6 +101,24 @@ export function renderCommand(name, h) {
 	return `${out.join("\n\n")}\n`;
 }
 
+/** The command table (cli.mjs registers it as it loads), for usage errors raised in the modules it calls. @type {Record<string, HelpEntry>} */
+let TABLE = {};
+/** @param {Record<string, HelpEntry>} table */
+export function registerCommands(table) { TABLE = table; }
+
+/**
+ * A usage error's message, from the command's usage lines: those of subcommand SUB when given
+ * ("host use", "runners once"), else all of them. HINT goes after, in parentheses.
+ * @param {string} name @param {{ sub?: string, hint?: string }} [opts]
+ */
+export function usageText(name, { sub, hint } = {}) {
+	const h = Object.hasOwn(TABLE, name) ? TABLE[name].help : undefined;
+	let lines = h?.usage ?? [name];
+	if (sub) lines = lines.filter((u) => u === `${name} ${sub}` || u.startsWith(`${name} ${sub} `));
+	if (!lines.length) throw new Error(`no usage line for ${name} ${sub}`);
+	return `usage: ${lines.map((u) => `boxery ${u}`).join("\n       ")}${hint ? `   (${hint})` : ""}`;
+}
+
 /** The command NAME means (an alias's target), or null. @param {Record<string, HelpEntry>} table @param {string} name */
 export function resolve(table, name) {
 	if (!Object.hasOwn(table, name)) return null;
