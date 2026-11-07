@@ -20,6 +20,11 @@ expect_fail() { local d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$d (should
 sql() { node --disable-warning=ExperimentalWarning -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1]);console.log(JSON.stringify(d.prepare(process.argv[2]).all()))' "$BOXERY_CONF/leases.db" "$1"; }
 
 [[ $("$H" backend) == fake ]] && ok "backend selection via env" || bad "backend selection"
+# npm install -g CHECKOUT: the package directory is a symlink, the bin a relative symlink into it.
+mkdir -p "$tmp/npm/lib/node_modules" "$tmp/npm/bin"; ln -s "$ROOT" "$tmp/npm/lib/node_modules/boxery-vm"
+ln -s ../lib/node_modules/boxery-vm/host/boxery-host "$tmp/npm/bin/boxery-host"
+v=$("$tmp/npm/bin/boxery-host" version 2>&1) && [[ $v == "$(jq -r .version "$ROOT/package.json")"* ]] &&
+	ok "version through a symlinked package directory (npm install -g CHECKOUT)" || bad "version via npm link: '$v'"
 expect_fail "new before build-base fails" "$H" new a1
 expect "build-base" "$H" build-base
 echo "ssh-ed25519 AAAAlaptop me@laptop" | "$H" add-key >/dev/null 2>&1 && ok "add-key" || bad add-key

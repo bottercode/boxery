@@ -8,7 +8,9 @@
 set -eu
 
 resolve() { local p=$1; while [ -L "$p" ]; do local t; t=$(readlink "$p"); case $t in /*) p=$t ;; *) p=$(dirname "$p")/$t ;; esac; done; echo "$p"; }  # macOS has no readlink -f
-ROOT=$(cd "$(dirname "$(resolve "$0")")/.." && pwd)
+# -P: the package directory itself can be a symlink (npm install -g CHECKOUT), and modules that check
+# whether they are the entry point compare their real path (boxery-upgrade.mjs).
+ROOT=$(cd -P "$(dirname "$(resolve "$0")")/.." && pwd)
 
 # --profile NAME: a second profile on this host (its own state, backend, proxy port and services) in
 # ~/.config/boxery-NAME. The controller passes it as an argument, so it needs no wrapper or env var.
