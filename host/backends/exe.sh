@@ -1,5 +1,5 @@
 # shellcheck shell=bash disable=SC2154  # sourced by host/boxery-host (provides die/log/need/ROOT/PROXY_PORT/…)
-# boxery backend: exe.dev (https://exe.dev). Sourced by host/boxery-host. EXPERIMENTAL.
+# boxery backend: exe.dev (https://exe.dev). Sourced by host/boxery-host.
 # Contract: see host/backends/README.md.
 #
 # - VMs run on exe.dev, managed through its ssh API (`ssh exe.dev CMD --json`). The host only needs ssh
@@ -213,7 +213,7 @@ backend_init() {
 	exe_host_has_battery || return 0
 	log "warning: this host has a battery, so it may sleep. exe.dev VMs reach the LLM proxy only through this host's tunnels:
     while it sleeps or is offline, agents lose their LLM mid-task. For long-running work, run boxery-host on an
-    always-on machine and use this one as a controller (docs/install.md#exedev-experimental)."
+    always-on machine and use this one as a controller (docs/install.md#exedev)."
 }
 backend_proxy_services() { :; }   # per-VM tunnels carry the proxy; nothing host-wide
 guest_proxy_upstream() { echo "TCP:127.0.0.1:$EXE_GUEST_PORT"; }

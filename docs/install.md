@@ -4,7 +4,7 @@
 
 boxery has two halves:
 
-- **The VM host** runs the VMs, the LLM credential proxy and the lease reaper. It can be a Linux box with KVM (recommended), a Mac with Lima, or any machine with ssh driving VMs on exe.dev or boat.dev (both experimental). It can also drive headless [OpenShell](openshell.md) sandboxes (experimental).
+- **The VM host** runs the VMs, the LLM credential proxy and the lease reaper. It can be a Linux box with KVM (recommended), a Mac with Lima, or any machine with ssh driving VMs on exe.dev or boat.dev (experimental). It can also drive headless [OpenShell](openshell.md) sandboxes (experimental).
 - **The controller** is the `boxery` CLI on your laptop (Node + ssh). The pi extension and the MCP server run the same code.
 
 They can be the same machine.
@@ -15,7 +15,7 @@ They can be the same machine.
 |---|---|---|---|
 | Your Mac | The same Mac | [`lima`](#macos-host-lima) | Stable |
 | A physical Linux machine (KVM) | The same machine | [`libvirt`](#linux-host-libvirtkvm), [`cloud-hypervisor`](#linux-host-cloud-hypervisor-experimental) | libvirt: stable, fastest. Cloud Hypervisor: experimental |
-| exe.dev (cloud) | Your local machine, or any remote machine with ssh (e.g. a VPS) | [`exe`](#exedev-experimental) | Experimental |
+| exe.dev (cloud) | Your local machine, or any remote machine with ssh (e.g. a VPS) | [`exe`](#exedev) | Stable. Needs an always-on host |
 | boat.dev (cloud) | Your local machine, or any remote machine with ssh (e.g. a VPS) | [`boat`](#boatdev-experimental) | Experimental |
 | OpenShell sandboxes (Linux) | Any machine that can reach an OpenShell gateway | [`openshell`](#policy-enforced-headless-sandboxes-openshell-experimental) | Experimental. Headless only: no desktop, snapshots, forks or pools |
 
@@ -31,7 +31,7 @@ Agents see the same tools on every backend, except OpenShell, which has only the
 - [Linux host (libvirt/KVM)](#linux-host-libvirtkvm)
 - [macOS host (Lima)](#macos-host-lima)
 - [Linux host (Cloud Hypervisor, experimental)](#linux-host-cloud-hypervisor-experimental)
-- [exe.dev (experimental)](#exedev-experimental)
+- [exe.dev](#exedev)
 - [boat.dev (experimental)](#boatdev-experimental)
 - [OpenShell (experimental)](#policy-enforced-headless-sandboxes-openshell-experimental)
 - [Laptop / controller](#laptop--controller)
@@ -117,7 +117,7 @@ sudo setcap cap_net_admin+ep "$(command -v cloud-hypervisor)"
 ./host/boxery-host build-base
 ```
 
-## exe.dev (experimental)
+## exe.dev
 
 No KVM at all: run the VMs on [exe.dev](https://exe.dev) and the host (proxy, leases, tunnels) on any Linux box or Mac with ssh. You need an exe.dev account whose ssh key this machine offers first. If `ssh exe.dev whoami` says "Please complete registration", run `ssh exe.dev` in a terminal and enter your account's email to add the key.
 
@@ -129,11 +129,11 @@ boxery-host build-base               # ~3 min on an exeuntu VM, then kept paused
 boxery setup local                   # or: boxery setup you@this-host
 ```
 
-A VM can be as large as your exe.dev plan allows (boxery reads the limits from `ssh exe.dev billing plan`); on Personal, all your VMs share that capacity. `BOXERY_EXE_MAX_CPUS` / `BOXERY_EXE_MAX_MEM` set a lower limit, or a Work pool's size. `stop` pauses a VM. Layout, security notes and what's still unverified: [backends → exe](../host/backends/README.md#exe-experimental).
+A VM can be as large as your exe.dev plan allows (boxery reads the limits from `ssh exe.dev billing plan`); on Personal, all your VMs share that capacity. `BOXERY_EXE_MAX_CPUS` / `BOXERY_EXE_MAX_MEM` set a lower limit, or a Work pool's size. `stop` pauses a VM. Layout, security notes and what's still unverified: [backends → exe](../host/backends/README.md#exe).
 
 **Run the host on an always-on machine.** The VMs are in the cloud, but the host keeps one ssh tunnel per VM open to exe.dev, and that tunnel carries both the VM's ssh endpoint and the agents' only route to the LLM proxy. When the host sleeps or goes offline, every running agent loses its LLM in the middle of a task, and no controller can reach the VMs. The VMs keep running and the tunnels reconnect by themselves (within seconds) once the host is back. So put `boxery-host --backend exe` on a machine that stays up, such as a home server, a small Linux VPS or a desktop that doesn't sleep, and use your laptop as a controller only (`boxery setup you@that-host`). This keeps the security model: provider credentials stay on that machine and never enter a VM. On a Linux host, turn on linger (`sudo loginctl enable-linger "$USER"`, as above) so the tunnels, which are systemd user units, keep running when you're logged out. `boxery-host init` warns when this host has a battery, since it is probably a laptop that sleeps. If you do run the host on a laptop, keep it awake while agents work (on a Mac, for example `caffeinate -s` on AC power).
 
-**exe.dev integrations work alongside boxery's grants.** exe.dev [integrations](https://exe.dev/docs/integrations) (its `llm`, HTTP proxies, GitHub, S3, workload identity) give a VM credentials that exe.dev holds. boxery lets you use them, but they bypass its proxy and grants: no `boxery grant`, no per-VM revoke, no confirmation. New accounts attach `llm` to every VM, so agents in boxery's VMs can use your exe.dev LLM credits without an `llm:` grant. `boxery-host init`, `new`, `start` and reverts warn about each credential integration that reaches a VM (`reflection` and `notify` hold none), with the command to detach it. To keep agents to boxery's grants, detach them (for example `ssh exe.dev integrations detach llm auto:all`; detaching from `auto:all` affects your other exe.dev VMs too). Integrations you mean to use can go in `BOXERY_EXE_ALLOW_INTEGRATIONS=NAME,…` to stop the warning. See [the exe backend](../host/backends/README.md#exe-experimental).
+**exe.dev integrations work alongside boxery's grants.** exe.dev [integrations](https://exe.dev/docs/integrations) (its `llm`, HTTP proxies, GitHub, S3, workload identity) give a VM credentials that exe.dev holds. boxery lets you use them, but they bypass its proxy and grants: no `boxery grant`, no per-VM revoke, no confirmation. New accounts attach `llm` to every VM, so agents in boxery's VMs can use your exe.dev LLM credits without an `llm:` grant. `boxery-host init`, `new`, `start` and reverts warn about each credential integration that reaches a VM (`reflection` and `notify` hold none), with the command to detach it. To keep agents to boxery's grants, detach them (for example `ssh exe.dev integrations detach llm auto:all`; detaching from `auto:all` affects your other exe.dev VMs too). Integrations you mean to use can go in `BOXERY_EXE_ALLOW_INTEGRATIONS=NAME,…` to stop the warning. See [the exe backend](../host/backends/README.md#exe).
 
 `boxery-host ls` shows a running VM whose tunnel isn't connected as `tunnel connecting` (it is retrying) or `tunnel down` (it isn't running; `boxery-host start NAME` brings it back) in place of its address. Commands that need the VM say the same thing rather than waiting for ssh to time out.
 

@@ -28,14 +28,15 @@ checked by `test/backend-capabilities.test.mjs`.
 | libvirt | stable | linux/x64 | linux/x64 / kvm | host: kvm | None |
 | lima | stable | linux/x64, linux/arm64, darwin/x64, darwin/arm64 | darwin/arm64 / vz | host: vz, qemu | None |
 | cloud-hypervisor | experimental | linux/x64, linux/arm64 | linux/arm64 / kvm | host: kvm | resize: unsupported |
-| exe | experimental | linux/x64, linux/arm64, darwin/x64, darwin/arm64 | darwin/arm64 / exe.dev, linux/arm64 / exe.dev | remote: exe.dev | None |
+| exe | stable | linux/x64, linux/arm64, darwin/x64, darwin/arm64 | darwin/arm64 / exe.dev, linux/arm64 / exe.dev | remote: exe.dev | None |
 | openshell | experimental | linux/x64, linux/arm64, darwin/x64, darwin/arm64 | linux/x64 / docker | gateway (local or remote): gateway, docker, podman, microvm, kubernetes | desktop: unsupported; diskSnapshots: unsupported; fork: unsupported; restore: unsupported; resize: unsupported; pools: unsupported; leases: unsupported; guestSudo: unsupported; grants: unsupported |
 | boat | experimental | linux/x64, linux/arm64, darwin/x64, darwin/arm64 | Not recorded | remote: boat.dev | desktop: conditional (Paid boat.dev saved-snapshot access); headless: unsupported; diskSnapshots: conditional (Paid boat.dev saved-snapshot access); fork: conditional (Paid boat.dev saved-snapshot access); restore: conditional (Paid boat.dev saved-snapshot access); pools: conditional (Paid boat.dev saved-snapshot access); leases: conditional (Paid boat.dev saved-snapshot access) |
 <!-- backend-metadata:end -->
 
-“Not recorded” does not mean no provider testing occurred. The existing exe and boat
+“Not recorded” does not mean no provider testing occurred. The existing boat
 live-test reports do not specify a complete host OS/architecture/runtime tuple;
-they are not promoted into architecture-wide validation. Cloud Hypervisor's recorded
+they are not promoted into architecture-wide validation. exe's live runs recorded
+macOS arm64 and Linux arm64 hosts; x64 hosts remain supported but untested. Cloud Hypervisor's recorded
 validation used v54 on arm64 with nested KVM; x64 remains supported but untested.
 See [backend implementation notes](../host/backends/README.md) for detailed live-test
 coverage and image behavior. `fake` is internal test infrastructure, not a user backend.
