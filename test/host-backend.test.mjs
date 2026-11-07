@@ -161,6 +161,66 @@ test("a failing backend call keeps its exit status and says whether it reported 
 	await assert.rejects(b.call("backend_capture", ["a1", "a1@x"], { quiet: true }), (/** @type {any} */ e) => e.exitCode === 1 && e.message === "backend_capture failed");
 });
 
+test("guest: SSH retries use 250 ms probes, preserving the legacy wait budget", async (t) => {
+	const calls = path.join(dir, "attempts");
+	stub("ssh", `n=0; [[ ! -f "${calls}" ]] || read -r n <"${calls}"; n=$((n + 1)); echo "$n" >"${calls}"; [[ $n -gt 2 ]]`);
+	let now = 0;
+	const delays = [];
+	t.mock.method(performance, "now", () => now);
+	t.mock.method(globalThis, "setTimeout", (fn, ms) => { delays.push(ms); now += ms; queueMicrotask(fn); });
+	const guest = createGuest({ conf: path.join(dir, "conf"), env });
+	await guest.waitSsh({ host: "10.0.0.5", port: 22, name: "a1" }, 2);
+	assert.deepEqual(delays, [250, 250]);
+	assert.equal(readFileSync(calls, "utf8").trim(), "3");
+
+	stub("ssh", "exit 255");
+	delays.length = 0;
+	let asked = 0;
+	await assert.rejects(guest.waitSsh({ host: "10.0.0.5", port: 22, name: "a1" }, 2, async () => {
+		asked++; return { fatal: false, message: "still booting" };
+	}), /timed out.*still booting/);
+	assert.equal(asked, 8);
+	assert.deepEqual(delays, Array(8).fill(250));
+	assert.equal(now, 2500, "two legacy tries allow 2 seconds of waiting, not 250 ms");
+});
+
+test("guest: prepare (host key pinning) runs before every 250 ms probe", async (t) => {
+	stub("ssh", "exit 255");
+	let now = 0, prepared = 0;
+	t.mock.method(performance, "now", () => now);
+	t.mock.method(globalThis, "setTimeout", (fn, ms) => { now += ms; queueMicrotask(fn); });
+	const guest = createGuest({ conf: path.join(dir, "conf"), env });
+	await assert.rejects(guest.waitSsh({ host: "10.0.0.5", port: 22, name: "a1" }, 2, async () => null, async () => { prepared++; }), /timed out/);
+	assert.equal(prepared, 8, "one per probe: every 250 ms of the 2 s budget");
+});
+
+test("runtime: until a host key is pinned it is looked for on every probe; then refreshed at most every 2 s", async (t) => {
+	const { createRuntime } = await import("../host/runtime.mjs");
+	let now = 0, asked = 0;
+	t.mock.method(performance, "now", () => now);
+	t.mock.method(globalThis, "setTimeout", (fn, ms) => { now += ms; queueMicrotask(fn); });
+	const rt = createRuntime(env);
+	// A platform-managed key (boat): each ensureHostKey asks the backend once; the key appears on the 3rd ask.
+	t.mock.method(rt.vms, "has", async (/** @type {string} */ fn) => fn === "backend_platform_host_key");
+	t.mock.method(rt.vms, "call", async () => (++asked >= 3 ? "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" : ""));
+	t.mock.method(rt.vms, "endpointProblem", async () => null);
+	stub("ssh", "exit 255");
+	await assert.rejects(rt.waitSsh("a1", { host: "10.0.0.5", port: 22, name: "a1" }, 3), /timed out/);
+	// 16 probes over 4 s: asked at 0, 250 and 500 ms (pinned then), and once more at 2500 ms.
+	assert.equal(asked, 4);
+});
+
+test("guest: SSH connection time consumes the wait budget", async (t) => {
+	stub("ssh", "exit 255");
+	let now = 0, asked = 0;
+	t.mock.method(performance, "now", () => now);
+	const guest = createGuest({ conf: path.join(dir, "conf"), env });
+	await assert.rejects(guest.waitSsh({ host: "10.0.0.5", port: 22, name: "a1" }, 2, async () => {
+		asked++; now += 5000; return null;
+	}), /timed out/);
+	assert.equal(asked, 1, "a slow failed connection does not get another full wait budget");
+});
+
 test("guest: ssh argv, stdin for keys, wait retries, host key creation", async () => {
 	const log = path.join(dir, "ssh.log");
 	stub("ssh", `printf '%s\\n' "$*" >>"${log}"; [ -n "\${SSH_FAIL:-}" ] && exit 255; case "$*" in *authorized_keys*) cat >"${dir}/keys" ;; esac; exit 0`);
