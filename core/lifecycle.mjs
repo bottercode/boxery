@@ -182,7 +182,7 @@ export async function patch(args, opts = {}) {
 /** VMs on the host with this machine's grants (docs/cli.md: boxery ls --json). refresh: read guest
  *  software from running VMs first. @param {{ refresh?: boolean }} [how] @param {LifecycleOpts} [opts] */
 export async function listVms({ refresh = false } = {}, opts = {}) {
-	const out = await hostRun(["ls", "--json", ...(refresh ? ["--refresh"] : [])], { timeout: 120_000, signal: opts.signal, stderr: opts.stderr });
+	const out = await hostRun(["ls", "--json", ...(refresh ? ["--refresh"] : [])], { timeout: 120_000, signal: opts.signal, stderr: opts.stderr, onData: opts.onData });
 	if (!out.startsWith("[")) throw new Error(`host returned no JSON for 'ls --json' (update boxery-host on ${(await profileConfig()).host})`);
 	/** @type {Array<Record<string, unknown> & { name: string, state?: string }>} */
 	const rows = JSON.parse(out);
@@ -192,20 +192,9 @@ export async function listVms({ refresh = false } = {}, opts = {}) {
 	});
 }
 
-/** One line of `boxery ls`: VM NAME's grants, short (env:VAR,file:PATH,…), or "-". @param {string} name */
-function grantSummary(name) {
-	return listGrants(name).map((g) => g.kind === "env" ? `env:${g.var}` : g.kind === "file" ? `file:${g.remote?.replace(/^\/home\/agent\//, "")}` : g.kind === "http" ? `http:${g.host}` : g.kind === "llm" ? `llm:${g.provider}` : g.kind).join(",") || "-";
-}
-
-/** `boxery ls`: the host's table with a GRANTS column. @param {{ refresh?: boolean }} [how] @param {LifecycleOpts} [opts] */
-export async function listTable({ refresh = false } = {}, opts = {}) {
-	const out = await hostRun(["ls", ...(refresh ? ["--refresh"] : [])], { timeout: 120_000, signal: opts.signal, stderr: opts.stderr, raw: true });
-	return out.split("\n").filter((l) => l.length).map((line) => {
-		const n = line.split(" ")[0];
-		const col = n === "NAME" ? "GRANTS" : VALID_NAME.test(n) ? grantSummary(n) : "-";
-		return `${line.padEnd(100)} ${col}`;
-	}).join("\n");
-}
+/** A grant, short, for `boxery ls`: env:VAR, file:PATH (under the VM's home), http:HOST, llm:PROVIDER, ssh-agent.
+ *  @param {ReturnType<typeof listGrants>[number]} g */
+export const grantLabel = (g) => g.kind === "env" ? `env:${g.var}` : g.kind === "file" ? `file:${g.remote?.replace(/^\/home\/agent\//, "")}` : g.kind === "http" ? `http:${g.host}` : g.kind === "llm" ? `llm:${g.provider}` : g.kind;
 
 /** A host listing as JSON (shapes, snaps NAME, images, capabilities, backends): `boxery-host ARGS --json`.
  *  @param {string[]} args @param {LifecycleOpts} [opts] */

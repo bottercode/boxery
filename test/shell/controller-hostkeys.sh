@@ -34,7 +34,7 @@ printf '%s\n' "$G" | grep -qx 'checkhostip no' && printf '%s\n' "$G" | grep -qx 
 
 # --- a host from before pinned keys: keep working (unverified), warn, and switch once it is upgraded
 old="$tmp/oldhost"; mkdir -p "$old"
-printf '#!/usr/bin/env bash\ncase $1 in help) echo "  connect NAME [PORT]" ;; add-key) cat >/dev/null ;; ls) : ;; *) : ;; esac\n' >"$old/boxery-host"; chmod +x "$old/boxery-host"
+printf '#!/usr/bin/env bash\ncase $1 in help) echo "  connect NAME [PORT]" ;; add-key) cat >/dev/null ;; ls) echo "[]" ;; *) : ;; esac\n' >"$old/boxery-host"; chmod +x "$old/boxery-host"
 "$CLI" host add legacy local --host-bin "$old/boxery-host" >/dev/null 2>&1
 L=$BOXERY_HOME/profiles/legacy
 grep -q '^  StrictHostKeyChecking no$' "$L/ssh_config" && ! grep -q KnownHostsCommand "$L/ssh_config" && ok "older host: the old (unverified) ssh_config, so its VMs stay reachable" || bad "legacy ssh_config: $(cat "$L/ssh_config")"

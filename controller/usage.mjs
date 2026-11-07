@@ -19,8 +19,11 @@ build-base                      build the host's desktop base image (one-time, ~
 backends [--json]               backend support, requirements and capabilities (on selected host)
 capabilities [--json | --check]  selected host's platform and conditional capability assessment
 shapes [--json]                 VM sizes defined on the host (* = default; see docs/shapes.md)
-ls [--json] [--refresh]         list VMs (with their shape, grants and guest software: GUEST is
-                                  current, outdated or unknown; --refresh reads it from running VMs)
+ls [--json] [--refresh] [--running]
+                                list VMs: every host's under one header, a section each, unless
+                                  --host NAME (--json: one host). STATUS says what's worth knowing:
+                                  pool lease, outdated guest software, grants. --running: only
+                                  running VMs; --refresh reads guest software from running VMs
 patch NAME|--all [--wait S]     update a VM's guest software to the host's image layers (security
                                   updates, browsers, agent CLIs; restarts it if they ask to). A pool
                                   VM must be free (--wait S for its lease to end); its clean image is

@@ -203,12 +203,29 @@ test("ls --json fails without emitting malformed JSON if grant lookup fails", as
 	assert.equal(missing.code, 17); assert.equal(missing.stdout, "");
 });
 
-test("text ls preserves non-VM informational lines without trying to read their grants", async () => {
-	writeFileSync(path.join(root, "inventory.txt"), 'NAME STATE\n(no VMs)\nNOTICE: older host\n');
+test("text ls is drawn from ls --json: grants, pool leases and outdated guests in STATUS; --running filters", async () => {
+	writeFileSync(store, "env\tSHOWN\t\n");
+	writeFileSync(path.join(root, "inventory.json"), `[
+{"name":"demo","state":"running","ssh_addr":"10.0.0.2:22","disk_size":40,"disk_used":1.25,"shape":"standard","desktop":true,"guest":{"status":"current","checked_at":1}},
+{"name":"pool1","state":"shut off","desktop":false,"lease":{"state":"free"},"guest":{"status":"outdated","reasons":["layers changed"]}},
+{"name":"pool2","state":"running","lease":{"state":"leased","holder":"ben@mac","expires_at":${Math.floor(Date.now() / 1000) + 7300}},"guest":{"status":"current"}}
+]\n`);
 	const r = await headless(["ls"]);
 	assert.equal(r.code, 0, r.output);
-	assert.match(r.stdout, /\(no VMs\)/);
-	assert.doesNotMatch(r.stderr, /invalid VM name/);
+	assert.match(r.stdout, /^NAME +STATE +SSH +DISK +SHAPE +KIND +STATUS\n/);
+	assert.match(r.stdout, /^demo +running +10\.0\.0\.2:22 +1\.3\/40GiB +standard +desktop +grants env:SHOWN$/m);
+	assert.match(r.stdout, /^pool1 +shut off +- +- +- +headless +pool free; outdated guest \(layers changed\)$/m);
+	assert.match(r.stdout, /^pool2 +running .* leased by ben@mac, 2h left$/m);
+	assert.match(r.stderr, /guest software not checked yet: pool2 \(ls --refresh reads it\)/);
+	assert.match(r.stderr, /outdated guest software on pool1; update with: boxery patch NAME\|--all/);
+	const running = await headless(["ls", "--running"]);
+	assert.equal(running.code, 0, running.output);
+	assert.doesNotMatch(running.stdout, /pool1/);
+	assert.match(running.stdout, /^pool2 /m);
+	const json = await headless(["ls", "--json", "--running"]);
+	assert.deepEqual(JSON.parse(json.stdout).map((/** @type {{ name: string }} */ v) => v.name), ["demo", "pool2"]);
+	writeFileSync(path.join(root, "inventory.json"), "[]\n");
+	assert.equal((await headless(["ls"])).stdout, "(no VMs)\n");
 });
 
 test("revoke warns when nothing matched instead of claiming access was removed", async () => {

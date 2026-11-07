@@ -20,7 +20,8 @@ boxery --host exe build-base         # desktop base image, once (~3 min); headle
 boxery host ls                       # name, default marker, config directory, destination, backend, same-profile names
 boxery host show hornet              # prints its config directory (not credentials)
 boxery host use hornet               # atomic default selection
-boxery --host laptop ls              # explicit selection overrides the default
+boxery ls                            # every host's VMs, a section each (the default first)
+boxery --host laptop ls              # just that host's
 boxery --host hornet new demo
 boxery --host hornet desktop demo
 boxery --host hornet grant demo ssh-agent

@@ -79,20 +79,6 @@ async function cmdFork(s, args) {
 	await lc(() => lifecycle.forkVm(src, dsts, { ...size, grants: approved }, passthrough()));
 }
 
-/** ls [--json] [--refresh] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
-async function cmdLs(s, args) {
-	let json = false, refresh = false;
-	for (const a of args) { if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else die("usage: boxery ls [--json] [--refresh]"); }
-	needHost(s);
-	if (json) {
-		/** @type {unknown[]} */
-		let vms;
-		try { vms = await lifecycle.listVms({ refresh }, { stderr: "inherit" }); } catch (e) { hostFailed(e); }
-		return say(vms.length ? `[\n${vms.map((v) => JSON.stringify(v)).join(",\n")}\n]` : "[]");
-	}
-	try { say(await lifecycle.listTable({ refresh }, { stderr: "inherit" })); } catch (e) { hostFailed(e); }
-}
-
 /** patch NAME|--all [--wait S] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdPatch(s, args) {
 	if (args[0] !== "--all") needVm(args[0]);
@@ -314,8 +300,8 @@ export const COMMANDS = {
 	backends: async (s, args) => hostPass(s, ["backends", ...args]),
 	capabilities: async (s, args) => hostPass(s, ["capabilities", ...args]),
 	shapes: async (s, args) => { needHost(s); if (!(args.length === 0 || (args.length === 1 && args[0] === "--json"))) die("usage: boxery shapes [--json]"); await hostPass(s, ["shapes", ...args]); },
-	ls: cmdLs,
-	list: cmdLs,
+	ls: async (s, args) => (await import("./ls.mjs")).ls(s, args, { allHosts: false }),
+	list: async (s, args) => (await import("./ls.mjs")).ls(s, args, { allHosts: false }),
 	patch: async (s, args) => { needHost(s); await cmdPatch(s, args); },
 	snaps: async (s, args) => { needHost(s); needVm(args[0]); await hostPass(s, ["snaps", ...args]); },
 	"proxy-log": async (s, args) => hostPass(s, ["proxy-log", ...args]),
@@ -395,7 +381,9 @@ async function main(argv) {
 			die(`host ${name} is not configured; run: boxery setup user@host|local --name ${name}`);
 		}
 	}
-	const command = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : null;
+	// Plain `ls` lists every host; --host NAME ls just that one.
+	const command = (cmd === "ls" || cmd === "list") && !explicit ? async (/** @type {Selected} */ s, /** @type {string[]} */ a) => (await import("./ls.mjs")).ls(s, a, { allHosts: true })
+		: Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : null;
 	if (!command) { process.stdout.write(USAGE + RUN_EXAMPLES); throw new CliError("", 1); }
 	const s = await select(name, dir);
 	await withHost(s.host, async () => {
