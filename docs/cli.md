@@ -308,40 +308,73 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 ## `boxery-host` (the VM host)
 
-```
-init [--backend libvirt|lima|cloud-hypervisor|exe|boat]
-                                install proxy, vsock bridge, reaper services + backend setup, symlinks
---profile NAME COMMAND...       run in profile NAME (~/.config/boxery-NAME): a second backend on this host.
-                                --profile NAME init --backend B creates it with a free proxy port and its own services
-profiles [--json]               every profile on this host: name, backend, proxyPort, proxyUnit, conf
-version [--json]                this install's version, commit and kind (git | npm)
-upgrade [--check] [--ref REF] [--wait S] [--reinit]
-                                update this install, re-run init for each profile using it, check, roll back on failure
-                                (code and each profile's state, from $BOXERY_CONF/pre-upgrade/, kept after success)
-build-base                      build the golden desktop image (one time; headless VMs don't need it)
-add-key < key.pub               authorize a controller's ssh key for new VMs
-new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--from IMAGE] [--headless [--layers github-runner]]
-fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB]
-shapes [--json]                 VM sizes: built-ins + ~/.config/boxery/shapes.json (see Shapes)
-ls [--json] [--refresh] | ip NAME | start NAME | stop NAME | rm NAME
-patch NAME|--all [--wait S]     update a VM's guest software to this host's image layers (see Lifecycle)
-snap NAME [SNAP] | snaps NAME [--json] | snap-rm NAME SNAP | revert NAME SNAP | images [--json]
-connect NAME [PORT]             stdio to a VM port (ssh ProxyCommand)
-known-hosts NAME                NAME's pinned ssh host key as one known_hosts line (ssh KnownHostsCommand; empty if none)
-pin NAME [--from-guest]         re-pin running NAME's ssh host key; prints its SHA256 fingerprint
-proxy-log [N]
+`boxery-host help` lists every command; `boxery-host COMMAND --help` shows one. Generated from the same help (`host/help.mjs`); edit it there, then `npm run docs:cli`. `--profile NAME` before any command runs it in a second profile on this host (`~/.config/boxery-NAME`: its own backend, state, proxy port and services); `--profile NAME init --backend B` creates it with a free proxy port. `upgrade` keeps the code and each profile's state from before in `$BOXERY_CONF/pre-upgrade/` after a success too.
 
-pool add NAME | rm NAME [--force] | ls [--json]
-acquire --holder H [--ttl S] [--wait S] [--only NAME,…] [--json]   (lease ssh pubkey on stdin; --only: one of these VMs)
-renew LEASE [--ttl S] [--json] | release LEASE | reap | reconcile
+<!-- BEGIN generated: boxery-host commands (npm run docs:cli) -->
 
-runners config [--repo OWNER/REPO | --org ORG] [--vms NAME,…] [--count N] [--labels L,…] [--group ID] [--ttl S] [--api URL] [--prefix P]
-                                configure GitHub Actions runners (saved in runners.json; no flags: print it)
-runners token < FILE            store the GitHub token (first line of stdin) in runners.env, 0600
-runners start | stop            turn the runner manager service on or off
-runners status [--json]         configuration, whether a token is set (never its value), the service, the leased runner VMs
-runners run                     the runner manager in the foreground (what the service runs)
-```
+**Setup**
+
+| Command | What it does |
+|---|---|
+| `boxery-host init [--backend libvirt\|lima\|cloud-hypervisor\|exe\|boat\|openshell]` | Install the proxy and reaper services, backend setup and symlinks [→](install.md) |
+| `boxery-host profiles [--json]` | The profiles on this host (backend, proxy port, service, state dir) [→](hosts.md) |
+| `boxery-host version [--json]` | This install's version, commit and kind (git or npm) |
+| `boxery-host upgrade [--check] [--ref REF] [--wait S] [--reinit]` | Update this install, re-run init for its profiles, check them [→](install.md#upgrading) |
+| `boxery-host build-base` | Build the golden desktop image (one time; not for headless VMs) |
+| `boxery-host add-key < key.pub` | Authorize a controller's ssh key for new VMs |
+| `boxery-host backends [--json]` | Backend support, requirements and capability declarations [→](backends.md) |
+| `boxery-host capabilities [--json \| --check]` | This host's platform, validation and conditional capabilities [→](backends.md) |
+| `boxery-host backend` | This profile's VM backend |
+| `boxery-host help [COMMAND]` | Show help for boxery-host or a command |
+
+**VMs**
+
+| Command | What it does |
+|---|---|
+| `boxery-host new NAME [--shape S] [--cpus N] [--mem MiB] [--disk GiB] [--from IMAGE] [--headless [--layers L,…]]` | Create a VM; prints NAME HOST:PORT [→](#lifecycle) |
+| `boxery-host fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB]` | Copy a VM (running or not) into new VMs with their own identity [→](#snapshots-and-forks) |
+| `boxery-host ls [--json] [--refresh]` | VMs; --refresh first reads running VMs' guest build records (also: `list`) |
+| `boxery-host shapes [--json]` | VM sizes (built-ins + shapes.json in the profile; * = default) [→](shapes.md) |
+| `boxery-host ip NAME` | A running VM's ssh address |
+| `boxery-host start NAME` | Start a VM |
+| `boxery-host stop NAME` | Stop a VM |
+| `boxery-host rm NAME` | Destroy a VM, its snapshots and its proxy token (also: `delete`) |
+| `boxery-host resize NAME [--cpus N] [--mem MiB] [--disk GiB]` | Change a VM's size; a running VM is restarted. Disk only grows [→](#lifecycle) |
+| `boxery-host patch NAME\|--all [--wait S]` | Update a VM's guest software to this host's image layers [→](#lifecycle) |
+| `boxery-host pin NAME [--from-guest]` | Re-pin running NAME's ssh host key; prints its fingerprint [→](security.md#vm-host-keys) |
+
+**Snapshots & images**
+
+| Command | What it does |
+|---|---|
+| `boxery-host snap NAME [SNAP]` | Snapshot a VM's disk [→](#snapshots-and-forks) |
+| `boxery-host snaps NAME [--json]` | A VM's snapshots, with their age and guest software |
+| `boxery-host snap-rm NAME SNAP` | Delete a snapshot |
+| `boxery-host revert NAME SNAP` | Restore a VM to a snapshot |
+| `boxery-host images [--json]` | Every image on this host (new --from takes one) |
+
+**Connections & proxy**
+
+| Command | What it does |
+|---|---|
+| `boxery-host connect NAME [PORT]` | Stdio to VM port (for ssh ProxyCommand) |
+| `boxery-host known-hosts NAME` | NAME's pinned ssh host key, a known_hosts line (KnownHostsCommand) |
+| `boxery-host edge-set NAME [--lease ID] < routes.json` | Set a VM's edge credential routes (boxery grant http:… uses it) [→](grants.md) |
+| `boxery-host proxy-log [N]` | Recent LLM + edge proxy requests |
+
+**Shared pool & runners**
+
+| Command | What it does |
+|---|---|
+| `boxery-host pool add NAME`<br>`boxery-host pool rm NAME [--force]`<br>`boxery-host pool ls [--json]` | The shared pool of leasable VMs [→](pool.md) |
+| `boxery-host acquire --holder H [--ttl S] [--wait S] [--only NAME,…] [--json]` | Lease a free pool VM (lease ssh pubkey on stdin) [→](pool.md) |
+| `boxery-host renew LEASE [--ttl S] [--json]` | Extend a lease [→](pool.md) |
+| `boxery-host release LEASE` | End a lease (the VM is reset to its clean image) [→](pool.md) |
+| `boxery-host reap` | Release expired leases, recover abandoned operations [→](lifecycle.md) |
+| `boxery-host reconcile` | Recover abandoned operations and check inventory drift [→](lifecycle.md) |
+| `boxery-host runners status [--json] \| start \| stop \| token < FILE \| run`<br>`boxery-host runners config [--repo OWNER/REPO \| --org ORG] [--vms NAME,…] [--count N] [--labels L,…] [--group ID] [--ttl S] [--api URL] [--prefix P]` | GitHub Actions runners, one job per freshly reset pool VM [→](github-runners.md) |
+
+<!-- END generated -->
 
 `runners` is described in [GitHub Actions runners](github-runners.md); `boxery runners …` on your machine passes the same arguments (and stdin, for `token`) to the host, except `runners once`, which runs on your machine with its `gh` login and drives the host's internal `runners __once`.
 

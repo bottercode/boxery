@@ -14,6 +14,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const { COMMANDS } = await import("../controller/cli.mjs");
 const { renderTop } = await import("../controller/usage.mjs");
 const { HELP: OPENSHELL_HELP } = await import("../controller/setup-openshell.mjs");
+const { HOST_COMMANDS } = await import("../host/help.mjs");
+/** @typedef {import("../help/index.mjs").Help} Help */
 const src = (/** @type {string} */ f) => readFileSync(path.join(ROOT, f), "utf8");
 
 // Where a handler's flags are parsed, when the probe below can't follow it from the handler.
@@ -57,7 +59,7 @@ function flagsInCode(name) {
 	return new Set([...t.matchAll(/"(--?[a-z][a-z-]*)"/g)].map((m) => m[1]).filter((f) => !skip.has(f)));
 }
 
-/** The flags a command's help documents: in its usage lines and its options (details are prose: they may mention other commands' flags). @param {import("../controller/usage.mjs").Help} h */
+/** The flags a command's help documents: in its usage lines and its options (details are prose: they may mention other commands' flags). @param {Help} h */
 function flagsInHelp(h) {
 	const text = [...h.usage, ...(h.flags ?? []).map(([f]) => f)].join(" ");
 	return new Set([...text.matchAll(/(?<![\w-])(--?[a-z][a-z-]*)/g)].map((m) => m[1]).filter((f) => f !== "--"));
@@ -77,17 +79,67 @@ test("each command's help names exactly the flags its code reads", () => {
 	}
 });
 
-test("pass-through commands document the flags the host's usage gives", () => {
-	const r = spawnSync(process.execPath, [path.join(ROOT, "host/cli.mjs"), "help"], { encoding: "utf8", env: { ...process.env, BOXERY_BACKEND: "fake", BOXERY_CONF: mkdtempSync(path.join(tmpdir(), "boxery-conf-")) } });
-	const hostHelp = r.stdout;
-	assert.ok(hostHelp.includes("boxery-host"), `boxery-host help: ${r.stderr}`);
+test("pass-through commands document only flags boxery-host takes", () => {
 	for (const [name, hostCmd] of Object.entries(HOST_PARSED)) {
-		const lines = hostHelp.split("\n").filter((l) => new RegExp(`^  ${hostCmd}\\b|\\| ${hostCmd}\\b`).test(l));
-		assert.ok(lines.length, `boxery-host help has no ${hostCmd} line`);
-		const h = /** @type {import("../controller/usage.mjs").Help} */ (/** @type {{ help: object }} */ (COMMANDS[name]).help);
-		const mine = flagsInHelp(h);
-		// The host's admin-only flags (acquire's --holder, runners config's --api) needn't all be repeated.
-		for (const f of mine) if (!["--help", "-h"].includes(f)) assert.ok(lines.join(" ").includes(f) || hostHelp.includes(f) || src("host/runners.mjs").includes(`"${f}"`), `boxery ${name} documents ${f}, which boxery-host ${hostCmd} doesn't take`);
+		const mine = flagsInHelp(/** @type {{ help: Help }} */ (COMMANDS[name]).help);
+		const host = flagsInHelp(/** @type {{ help: Help }} */ (HOST_COMMANDS[hostCmd]).help);
+		const extra = [...mine].filter((f) => !host.has(f) && !(name === "runners" && f.startsWith("--") && /** @type {{ help: Help }} */ (COMMANDS.runners).help.usage[0].includes(f)));
+		assert.deepEqual(extra, [], `boxery ${name} documents ${extra.join(", ")}, which boxery-host ${hostCmd} doesn't take`);
+	}
+});
+
+// ---------------------------------------------------------------- boxery-host (host/help.mjs)
+// Where each host command's flags are parsed: [file, function] (functions found by name).
+const HOST_PARSED_IN = {
+	init: [["host/boxery-host", null]], // --backend: the entry point and init read BOXERY_BACKEND
+	version: [["host/boxery-upgrade.mjs", "main"]], upgrade: [["host/boxery-upgrade.mjs", "parseArgs"]],
+	backends: [["host/capabilities.mjs", "backends"]], capabilities: [["host/capabilities.mjs", "capabilities"]],
+	profiles: [["host/setup.mjs", "profiles"]],
+	new: [["host/vms.mjs", "parseNewArgs"]], fork: [["host/vms.mjs", "fork"]], resize: [["host/vms.mjs", "resize"]],
+	ls: [["host/cli.mjs", "ls"]], shapes: [["host/cli.mjs", "shapes"]], snaps: [["host/cli.mjs", "snaps"]], images: [["host/cli.mjs", "images"]],
+	patch: [["host/patch.mjs", "parsePatchArgs"]], pin: [["host/hostkeys.mjs", "pin"]],
+	"edge-set": [["host/pool.mjs", "edgeSet"]],
+	pool: [["host/pool.mjs", "poolLs"], ["host/pool.mjs", "poolRm"]],
+	acquire: [["host/boxery-lifecycle.mjs", "acquire"]], renew: [["host/boxery-lifecycle.mjs", "renew"]],
+	runners: [["host/runners.mjs", "configure"], ["host/runners.mjs", "status"]],
+};
+const HOST_LITERAL_ONLY = { init: ["--backend"] }; // parsed in Bash: checked by presence, not by function
+
+test("each boxery-host command's help names exactly the flags its code reads", () => {
+	// host/cli.mjs runs when imported: read its dispatch tables' keys from the source.
+	const cli = src("host/cli.mjs");
+	// (keys: a word at the start of a line or after ", " that a colon follows, or a bare shorthand key; not words in comments)
+	const keys = (/** @type {string} */ table) => body(cli.replace(new RegExp(`const ${table} = \\{`), `function ${table}() {`), table).split("\n").map((l) => l.replace(/\/\/.*$/, ""))
+		.flatMap((l) => [...l.matchAll(/(?:^\s*|,\s*)"?([a-z][a-z-]*)"?(?=\s*[:,]|\s*$)/g)].map((m) => m[1]));
+	const dispatched = new Set([...keys("COMMANDS"), ...keys("MUTATING"), "connect", "version", "upgrade", "help"]);
+	for (const n of dispatched) assert.ok(Object.hasOwn(HOST_COMMANDS, n), `boxery-host ${n} has no help in host/help.mjs`);
+	for (const [name, e] of Object.entries(HOST_COMMANDS)) {
+		if ("alias" in e) { assert.ok(Object.hasOwn(HOST_COMMANDS, e.alias), `boxery-host ${name} aliases a missing command`); continue; }
+		assert.ok(dispatched.has(name), `host/help.mjs documents boxery-host ${name}, which host/cli.mjs doesn't dispatch`);
+		const help = flagsInHelp(e.help);
+		let code = new Set();
+		for (const [file, fn] of HOST_PARSED_IN[name] ?? []) {
+			let text = fn ? body(src(file), fn) : src(file);
+			// fork's arguments are parsed up to its usage check; after that it builds new's arguments (--from IMAGE)
+			if (name === "fork") text = text.slice(0, text.indexOf("hostUsage("));
+			// (acquire and renew take --json through jsonFlag(), defined beside them)
+			if (/\bjsonFlag\(args\)/.test(text)) text += /** @type {RegExpExecArray} */ (/const jsonFlag = .*$/m.exec(src(file)))[0];
+			assert.ok(text, `${file}: no ${fn}`);
+			for (const m of text.matchAll(/"(--?[a-z][a-z-]*)"/g)) code.add(m[1]);
+		}
+		if (name in HOST_LITERAL_ONLY) code = new Set(HOST_LITERAL_ONLY[name].filter((f) => src("host/boxery-host").includes(f) || src("host/setup.mjs").includes(f)));
+		code.delete("--help"); code.delete("-h");
+		const undocumented = [...code].filter((f) => !help.has(f)), unread = [...help].filter((f) => !code.has(f));
+		assert.deepEqual(undocumented, [], `boxery-host ${name} reads ${undocumented.join(", ")} but host/help.mjs doesn't say so`);
+		assert.deepEqual(unread, [], `boxery-host ${name}'s help documents ${unread.join(", ")}, which its code never reads`);
+		assert.ok(e.help.summary.length <= 72, `boxery-host ${name}: summary over 72 characters`);
+	}
+});
+
+test("no host module keeps its own usage text (internal entry points aside)", () => {
+	for (const f of readdirSync(path.join(ROOT, "host")).filter((f) => f.endsWith(".mjs") && f !== "help.mjs")) {
+		const hits = src(`host/${f}`).split("\n").filter((l) => /["'`]usage: (?!runners __once|boxery-leases\.mjs)/.test(l));
+		assert.deepEqual(hits, [], `host/${f}: use hostUsage(COMMAND) from host/help.mjs, not a literal usage line`);
 	}
 });
 
@@ -101,7 +153,7 @@ test("examples run real commands with documented flags", () => {
 				if (words[i] === "--host") i += 2;
 				const cmd = words[i];
 				assert.ok(Object.hasOwn(COMMANDS, cmd), `${name} example uses an unknown command: ${part}`);
-				const target = /** @type {{ help: import("../controller/usage.mjs").Help }} */ (COMMANDS[cmd]);
+				const target = /** @type {{ help: Help }} */ (COMMANDS[cmd]);
 				const documented = flagsInHelp(target.help);
 				// boxery's own words: for run and ssh, up to the command they run in the VM.
 				let own = words.slice(i + 1);

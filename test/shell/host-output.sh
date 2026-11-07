@@ -49,54 +49,14 @@ run stop b2
 echo "==> b2 shutting down" >"$tmp/expected"; same "stop logs on stderr" err 0
 
 echo "== usage"
-cat >"$tmp/expected" <<'EOF'
-boxery-host — Ubuntu desktop VMs for coding agents (backend: fake)
-
-  init [--backend libvirt|lima|cloud-hypervisor|exe|boat|openshell]  install proxy services + backend setup, symlinks
-  --profile NAME COMMAND…   use a second profile on this host (~/.config/boxery-NAME): its own backend,
-                            state, proxy port and services. Create it with: --profile NAME init --backend B
-  backends [--json]         backend support, requirements and capability declarations
-  capabilities [--json | --check]  this host's platform, validation and conditional capabilities
-  profiles [--json]         the profiles on this host (backend, proxy port, service name, state directory)
-  version [--json]          this install's version, commit and kind (git or npm)
-  upgrade [--check] [--ref REF] [--wait S] [--reinit]
-                            update this install (git pull --ff-only, or npm), re-run init for every
-                            profile using it and check them; waits for in-flight operations, rolls back on failure
-  build-base                build the golden desktop image (one-time; headless VMs don't need it)
-  add-key < key.pub         authorize a controller's ssh key for new VMs
-  new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless [--layers github-runner]]
-                            --headless: no desktop; boots the stock image, no build-base needed
-                            --layers: optional image layers too (github-runner: a GitHub Actions runner VM)
-  new NAME --from IMAGE     boot a new VM from an image (e.g. demo@s1; keeps its desktop or not)
-  fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB]
-                            copy a VM (running or not) into new VMs with their own identity
-                            (same size as SRC unless --shape or size flags are given)
-  shapes [--json]           VM sizes (built-ins + TMP/conf/shapes.json; * = default)
-  ls [--json] [--refresh]   VMs; --refresh first reads each running VM's guest build record (GUEST column)
-  ip NAME | start NAME | stop NAME | rm NAME
-  patch NAME|--all [--wait S]
-                            update a VM's guest software to this host's image layers (restarts it if the
-                            updates ask to; a pool VM must be free, and its clean image is captured again)
-  resize NAME [--cpus N] [--mem MiB] [--disk GiB]
-                            change a VM's size; a running VM is restarted. Disk only grows
-  snap NAME [SNAP] | snaps NAME [--json] | snap-rm NAME SNAP | revert NAME SNAP | images [--json]
-  connect NAME [PORT]       stdio to VM port (for ssh ProxyCommand)
-  known-hosts NAME          NAME's pinned ssh host key as a known_hosts line (ssh KnownHostsCommand)
-  pin NAME [--from-guest]   re-pin running NAME's ssh host key (hypervisor/loopback channel; --from-guest:
-                            trust what NAME's ssh endpoint answers once)
-  proxy-log [N]             recent LLM + edge proxy requests
-  edge-set NAME [--lease ID] < routes.json   set the VM's edge credential routes (used by boxery grant http:…)
-
-  pool add NAME | rm NAME [--force] | ls [--json]   shared pool of leasable VMs
-  acquire --holder H [--ttl S] [--wait S] [--only NAME,…] [--json]   lease a free pool VM (lease ssh pubkey on stdin)
-  renew LEASE [--ttl S] [--json] | release LEASE | reap | reconcile
-
-  runners status [--json] | start | stop | token < FILE | config [--repo O/R | --org ORG] [--vms NAME,…] …
-                            GitHub Actions runners, one job per freshly reset pool VM (docs/github-runners.md)
-EOF
-run help; same "help" out 0
-run; same "no command → usage" out 0
-run bogus; same "unknown command → usage, exit 1" out 1
+# The help itself is rendered from host/help.mjs (test/help-drift.test.mjs pins it); here: how it's reached.
+run help; [[ $rc == 0 && $(head -1 "$tmp/out") == "boxery-host — Ubuntu desktop VMs for coding agents (backend: fake)" ]] && grep -q '^Profile: TMP/conf$' "$tmp/out" && ok "help: backend and profile" || bad "help: $(head -3 "$tmp/out")"
+cp "$tmp/out" "$tmp/expected"; run; same "no command → help" out 0
+# Controllers probe these lines (core/profile.mjs hostSupports, core/registry.mjs): an older host lacks them.
+grep -q '^  known-hosts NAME' "$tmp/expected" && grep -q '^  renew LEASE \[--ttl S\] \[--json\]' "$tmp/expected" && grep -q capabilities "$tmp/expected" && ok "help keeps the lines controllers probe" || bad "help: a probed line is gone"
+run snaps --help; [[ $rc == 0 && $(head -2 "$tmp/out") == $'Usage:\n  boxery-host snaps NAME [--json]' ]] && ok "COMMAND --help" || bad "snaps --help: $(cat "$tmp/out")"
+err "unknown command → one line, exit 1" "boxery-host: unknown command: bogus; see: boxery-host help" bogus
+err "a near miss suggests the command" "boxery-host: unknown command: shapez (did you mean shapes?); see: boxery-host help" shapez
 
 echo "== listings"
 cat >"$tmp/expected" <<'EOF'

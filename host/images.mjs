@@ -7,6 +7,7 @@ import { BackendError } from "./backend.mjs";
 import { copyBuildRecord, deleteBuildRecord, refreshBuild } from "./build-info.mjs";
 import { installToken } from "./seed.mjs";
 import { fail, log, POOL_SNAP, stamp, validName, validSnap } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Backend, CallOptions } from "./backend.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
@@ -89,7 +90,7 @@ export async function revertVm(rt, name, label) {
 /** @param {Runtime} rt @param {string[]} args */
 export async function revert(rt, [name, label]) {
 	validName(name);
-	if (!label) fail("usage: revert NAME SNAP");
+	if (!label) fail(hostUsage("revert"));
 	validSnap(label);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
 	if (rt.poolRow(name)) fail(`${name} is a pool VM; it is reset on release`);

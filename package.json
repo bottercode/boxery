@@ -43,6 +43,7 @@
     "extension/",
     "backends/",
     "guests/",
+    "help/",
     "host/",
     "image/",
     "mcp/boxery-mcp.mjs",

@@ -7,6 +7,7 @@ import * as leases from "./boxery-leases.mjs";
 import { captureVm } from "./images.mjs";
 import { restorePetAccess } from "./vms.mjs";
 import { fail, jsonArray, log, POOL_SNAP, print, readFd, sleep, table, validName } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 
 /** Edge routes per host (stdin of edge-set). @typedef {Record<string, { headers?: Record<string, string> | null | false, readonly?: boolean | null }>} EdgeRoutes */
@@ -105,7 +106,7 @@ export function validRoutes(routes) {
 export async function edgeSet(rt, [name, ...args]) {
 	if (rt.backend === "openshell") fail("OpenShell credentials are managed with OpenShell providers, not Boxery grants");
 	validName(name);
-	if (args.length && (args.length !== 2 || args[0] !== "--lease" || !/^l-[0-9a-f]{32}$/.test(args[1]))) fail("usage: edge-set NAME [--lease ID] < routes.json");
+	if (args.length && (args.length !== 2 || args[0] !== "--lease" || !/^l-[0-9a-f]{32}$/.test(args[1]))) fail(hostUsage("edge-set"));
 	const want = args[1];
 	if (!await rt.vms.exists(name)) fail(`no such VM: ${name}`);
 	let edge;

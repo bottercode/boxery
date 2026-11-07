@@ -12,10 +12,11 @@ import { captureVm } from "./images.mjs";
 import { setLeaseKeys } from "./pool.mjs";
 import { fail, log, POOL_SNAP, sleep, validName, validNum } from "./util.mjs";
 import { vmRecord } from "./vm-records.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
-export const PATCH_USAGE = "usage: patch NAME|--all [--wait S]";
+const PATCH_USAGE = hostUsage("patch");
 const BOOT_ID = "cat /proc/sys/kernel/random/boot_id";
 
 /** NAME|--all [--wait S] → {name, all, wait}. @param {string[]} args */
