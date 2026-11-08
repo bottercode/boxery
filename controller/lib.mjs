@@ -3,7 +3,7 @@
 import { usageText } from "./usage.mjs";
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
-import { profileFromDirectory } from "../core/boxery-core.mjs";
+import { profileFromDirectory, vmProblem, withHost } from "../core/boxery-core.mjs";
 import { hostRun, profileConfig } from "../core/profile.mjs";
 /** @import { HostProfile } from "../core/boxery-core.mjs" */
 /** @import { ProfileConfig } from "../core/profile.mjs" */
@@ -67,11 +67,11 @@ export function needHost(s) {
  * @returns {Promise<number>}
  */
 export function inherit(cmd, args, { env = process.env, stdin = "inherit", input, stdout = "inherit" } = {}) {
-	killedBy = null; // (this command's, not an earlier one's)
+	killedBy = null; signalled = false; // (this command's, not an earlier one's)
 	return new Promise((resolve) => {
 		const child = spawn(cmd, args, { stdio: [input === undefined ? stdin : "pipe", stdout, "inherit"], env });
-		const ignore = () => {};
-		const pass = (/** @type {NodeJS.Signals} */ sig) => { try { child.kill(sig); } catch { /* gone */ } };
+		const ignore = () => { signalled = true; };
+		const pass = (/** @type {NodeJS.Signals} */ sig) => { signalled = true; try { child.kill(sig); } catch { /* gone */ } };
 		const term = () => pass("SIGTERM"), hup = () => pass("SIGHUP");
 		process.on("SIGINT", ignore); process.on("SIGQUIT", ignore); process.on("SIGTERM", term); process.on("SIGHUP", hup);
 		const done = (/** @type {number} */ code) => {
@@ -83,6 +83,8 @@ export function inherit(cmd, args, { env = process.env, stdin = "inherit", input
 		if (input !== undefined && child.stdin) { child.stdin.on("error", () => {}); child.stdin.end(input); }
 	});
 }
+/** A signal (Ctrl-C, TERM, HUP) arrived while the last terminal command ran: ssh then exits 255 itself. */
+let signalled = false;
 /** The signal that ended the last terminal command, if one did (cli.mjs then ends with it too, as an exec'd
  *  ssh would have). @type {NodeJS.Signals | null} */
 export let killedBy = null;
@@ -131,9 +133,28 @@ export function capture(cmd, args, { env = process.env, input } = {}) {
 }
 
 /** ssh to a VM through the profile's ssh_config, sharing this terminal. @param {Selected} s @param {string[]} args */
-export const vmSsh = (s, args, /** @type {Parameters<typeof inherit>[2]} */ opts = {}) => inherit("ssh", ["-F", s.host.sshConf, ...args], { env: s.config.env, ...opts });
-/** The same, with its output captured. @param {Selected} s @param {string[]} args @param {string | Buffer} [input] */
-export const vmSshCapture = (s, args, input) => capture("ssh", ["-F", s.host.sshConf, ...args], { env: s.config.env, input });
+export async function vmSsh(s, args, /** @type {Parameters<typeof inherit>[2]} */ opts = {}) {
+	const rc = await inherit("ssh", ["-F", s.host.sshConf, ...args], { env: s.config.env, ...opts });
+	if (rc === 255 && !signalled) await explainUnreachable(s, args);
+	return rc;
+}
+/** The same, with its output captured. explain: false when a 255 needs no explanation (wait's reconnects).
+ *  @param {Selected} s @param {string[]} args @param {string | Buffer} [input] @param {{ explain?: boolean }} [opts] */
+export async function vmSshCapture(s, args, input, { explain = true } = {}) {
+	const r = await capture("ssh", ["-F", s.host.sshConf, ...args], { env: s.config.env, input });
+	if (r.code === 255 && explain) await explainUnreachable(s, args);
+	return r;
+}
+/** ssh to NAME.boxery (the first such word in ARGS) exited 255: say why, if it can't be reached (core
+ *  vmProblem; ControlPersist hides the host's own message). Says nothing when the 255 was the command's,
+ *  or after a signal (Ctrl-C makes ssh exit 255 too).
+ *  @param {Selected} s @param {string[]} args */
+async function explainUnreachable(s, args) {
+	const vm = args.map((a) => /^([a-z][a-z0-9-]{0,30})\.boxery$/.exec(a)?.[1]).find(Boolean);
+	if (!vm) return;
+	const problem = await withHost(s.host, () => vmProblem(vm, { env: s.config.env })).catch(() => null);
+	if (problem) warn(problem.message);
+}
 
 /**
  * boxery-host ARGS on the selected host, passed straight through (stdin, stdout, stderr): what the CLI's
