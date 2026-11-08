@@ -148,7 +148,7 @@ lima_apply_cloudconfig() { # FILE build|vm [NAME]
 	else
 		# The files include the VM's pinned ssh host key (host/hostkeys.mjs): make sshd load it now, also
 		# where it runs as a long-lived ssh.service rather than socket-activated.
-		if grep -q '^  - path: /etc/ssh/boxery_host_ed25519_key$' "$f"; then echo 'systemctl try-reload-or-restart ssh.service || true' >>"$f.files.sh"; fi
+		if grep -q '^  - path: /etc/ssh/boxery_host_ed25519_key$' "$f"; then echo 'systemctl try-reload-or-restart ssh.service || systemctl try-reload-or-restart sshd.service || true' >>"$f.files.sh"; fi
 		ssh -F "$HOME/.lima/$(linst "$3")/ssh.config" "lima-$(linst "$3")" 'sudo bash -s' <"$f.files.sh" || return 1
 	fi
 	rm -f "$f.files.sh"

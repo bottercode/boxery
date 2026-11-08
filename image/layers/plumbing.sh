@@ -26,12 +26,12 @@ pkgs socat tmux git curl ca-certificates qemu-guest-agent
 mkdir -p /etc/boxery /etc/cloud/cloud.cfg.d /etc/systemd/system /etc/ssh/sshd_config.d /etc/sysctl.d /etc/profile.d
 # Make `agent` the cloud-init default user, so per-VM ssh_authorized_keys land there (also for VMs made
 # from this disk: snapshots and forks).
-cat >/etc/cloud/cloud.cfg.d/99-boxery.cfg <<'EOF'
+cat >/etc/cloud/cloud.cfg.d/99-boxery.cfg <<EOF
 system_info:
   default_user:
     name: agent
     gecos: boxery agent
-    groups: [sudo, adm]
+    groups: [$agent_groups]
     shell: /bin/bash
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true

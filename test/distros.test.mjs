@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { parseNewArgs, createVm } from "../host/vms.mjs";
 import { resources } from "../host/boxery-operations.mjs";
+import { cloudConfig } from "../host/seed.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const shell = (script, env = {}) => execFileSync("bash", ["-euo", "pipefail", "-c", script, "test", root], { env: { ...process.env, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -31,6 +32,11 @@ test("Lima reuses the native distro image definition without enabling host mount
 	assert.match(yaml, /forwardAgent: false/);
 	assert.throws(() => shell(script, { BOXERY_LIMA_ARCH: "aarch64" }), /Command failed/);
 	assert.match(shell(script.replace("20 archlinux", "20"), { BOXERY_LIMA_ARCH: "aarch64" }), /template:_images\/ubuntu-24.04/);
+});
+
+test("fresh pinned keys reload Arch's sshd unit as well as Ubuntu's ssh unit", () => {
+	const seed = cloudConfig({ name: "arch", keys: [], upstream: "TCP:host:8088", cred: "dummy", hostKey: { private: "private", public: "ssh-ed25519 dummy" } });
+	assert.match(seed, /try-reload-or-restart ssh\.service \|\| systemctl try-reload-or-restart sshd\.service/);
 });
 
 test("Arch layer packages use pacman full upgrades and native package names", () => {
