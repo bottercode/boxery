@@ -165,6 +165,8 @@ ID() { cat "$E/$1/id"; }   # NAME's current sandbox
 ids_of() { local d; for d in "$S"/sb/*/; do [[ $(cat "$d/name") == "bxtest-vm-$1" ]] && basename "$d"; done | tr '\n' ' '; }
 img() { printf 'bxtest-i-%s' "$(printf '%s' "$1" | { shasum 2>/dev/null || sha1sum; } | cut -c1-16)"; }
 lsj() { "$H" ls --json; }
+# sql QUERY → its rows in the host's store, as JSON (each VM's record is a vm_records row)
+sql() { node --disable-warning=ExperimentalWarning -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1]);console.log(JSON.stringify(d.prepare(process.argv[2]).all()))' "$BOXERY_CONF/leases.db" "$1"; }
 U() { echo "$HOME/.config/systemd/user/boxery-boat-bxtest-$1.service"; }
 mkdir "$S/sb/bx_other"; echo "my dev box" >"$S/sb/bx_other/name"; echo ready >"$S/sb/bx_other/state"; echo default >"$S/sb/bx_other/type"; echo '{}' >"$S/sb/bx_other/labels"; echo 203.0.113.250 >"$S/sb/bx_other/ip"   # the account's own sandbox
 
@@ -234,6 +236,8 @@ done
 [[ $(jq -r .type "$S/sb/$(ID v2)/create.json") == large && $(cat "$E/v2/slot") == 2 ]] && grep -F "boat type large: 8 vCPU, 16384 MiB, 111 GiB" "$tmp/err" >/dev/null && ok "8 vCPU → large (logged); second VM gets slot 2" || bad "v2: $(cat "$tmp/err")"
 j=$(lsj)
 jq -e 'map(select(.name == "v1"))[0] | .state == "running" and .ssh_addr == "127.0.0.1:22601" and .disk_size == 51 and .disk_used == null' <<<"$j" >/dev/null && ok "ls --json: running, tunnel address, disk" || bad "ls: $j"
+# The record is the type's size (#211); a bigger disk than the shape's keeps the shape's name.
+[[ $(sql "SELECT shape, cpus, mem, disk FROM vm_records WHERE name='v1'") == '[{"shape":"standard","cpus":4,"mem":8192,"disk":51}]' ]] && ok "recorded size: the boat type's, still the standard shape" || bad "record: $(sql "SELECT shape, cpus, mem, disk FROM vm_records WHERE name='v1'")"
 jq -e 'map(select(.name == "v1"))[0] | .tunnel == "up"' <<<"$j" >/dev/null && ok "ls --json: the tunnel's state" || bad "tunnel: $j"
 e=$("$H" new hl --headless 2>&1) && bad "headless accepted" || { [[ $e == *"boat: headless is unavailable"* && $e == *"use build-base and a desktop VM on a paid plan, or another backend"* ]] && ok "new --headless is refused clearly" || bad "headless: $e"; }
 jq -e 'map(.name) | sort == ["v1", "v2"]' <<<"$j" >/dev/null && ok "ls lists boxery VMs only (not the base, builders or the account's other sandboxes)" || bad "ls names: $j"

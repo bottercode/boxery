@@ -63,6 +63,13 @@ echo "== resize updates the record"
 unrecord a; echo "6 3072 30" >"$tmp/vms/a/size"   # unrecorded VM: fork reads the backend's size
 "$H" fork a a3 >/dev/null 2>&1; [[ $(size a3) == "6 3072 30" ]] && ok "fork of an unrecorded VM uses backend_size" || bad "a3: $(size a3)"
 
+echo "== the size the backend gave is recorded (#211)"
+# Like exe.dev capping to the account's largest VM: the record and ls show what the VM got, not what was asked.
+BOXERY_FAKE_MAX_CPUS=2 "$H" new k >/dev/null 2>&1
+[[ $(size k) == "2 8192 40" && $(rec k) == '{"shape":null,"cpus":2,"mem":8192,"disk":40}' ]] && ok "capped new: the capped size, as custom" || bad "k: $(size k) $(rec k)"
+[[ $("$H" ls --json | jq -c '.[] | select(.name == "k") | [.shape, .cpus, .mem]') == '["custom",2,8192]' ]] && ok "...and ls --json shows it" || bad "ls k: $("$H" ls --json | jq -c '.[] | select(.name == "k")')"
+BOXERY_FAKE_MAX_CPUS=2 "$H" fork b k2 >/dev/null 2>&1; [[ $(rec k2) == '{"shape":null,"cpus":2,"mem":16384,"disk":80}' ]] && ok "capped fork: the capped size" || bad "k2: $(rec k2)"
+
 echo "== rm forgets the size"
 "$H" rm b3 >/dev/null 2>&1; [[ $(sql "SELECT count(*) n FROM vm_records WHERE name='b3'") == '[{"n":0}]' ]] && ok "rm removes the size record" || bad "b3 record left"
 
