@@ -11,7 +11,7 @@ import path from "node:path";
 import * as linux from "../guests/linux.mjs";
 import { q } from "./shell.mjs";
 import { streamCopy } from "./copy-stream.mjs";
-import { VALID_DEST, shellWord } from "./ssh-config.mjs";
+import { DEFAULT_HOST_BIN, VALID_DEST, localHostBin, parseConfig, shellWord } from "./ssh-config.mjs";
 import { acquireLease, findLease, releaseLease, renewLease } from "./leases.mjs";
 import * as lifecycle from "./lifecycle.mjs";
 import { versions as versionInfo } from "./versions.mjs";
@@ -174,23 +174,74 @@ export function vmsAreRemote(destination, backend) {
 	return destination === "local" && backend ? false : null;
 }
 /**
+ * The host-side profile a registration reaches, as "DEST\tPROFILE" (PROFILE "" for the host's default one), or
+ * null when its config doesn't say plainly (one that needs a shell is never sourced here). Before host profiles
+ * (#88) another profile was a HOST_BIN wrapper script setting BOXERY_CONF=…/boxery-P or passing --profile P;
+ * on this machine that script is read too. @param {HostProfile} h
+ */
+function hostSide(h) {
+	const text = readProfileFile(path.join(h.dir, "config"));
+	const c = text == null ? null : parseConfig(text);
+	if (!c?.HOST || !VALID_DEST.test(c.HOST)) return null;
+	/** @type {string | null} */
+	let profile = c.HOST_PROFILE ?? "";
+	const bin = c.HOST_BIN ?? DEFAULT_HOST_BIN;
+	if (!profile && path.basename(bin) !== "boxery-host") {
+		if (c.HOST !== "local") return null; // a wrapper on another machine: can't tell
+		profile = wrapperProfile(localHostBin(bin, homedir()));
+		if (profile == null) return null;
+	}
+	return `${c.HOST}\t${profile}`;
+}
+/**
+ * The host profile a wrapper script on this machine selects, or null unless it says so plainly: every
+ * `--profile P` and `BOXERY_CONF=` outside comments must be literal and agree, and BOXERY_CONF must be the
+ * profile's own directory ($HOME/.config/boxery[-P]; anywhere else is state of its own). @param {string} file
+ */
+function wrapperProfile(file) {
+	if (!path.isAbsolute(file)) return null;
+	const text = readProfileFile(file, 16 * 1024);
+	if (text == null) return null;
+	const homes = ["$HOME", "${HOME}", "~", homedir()];
+	/** @type {Set<string>} */
+	const found = new Set();
+	for (const line of text.split("\n").map((l) => l.replace(/(^|\s)#.*$/, ""))) {
+		for (const m of line.matchAll(/--profile(?:[ =]+|$)(\S*)/g)) {
+			const p = /^(["']?)([a-z][a-z0-9-]{0,30})\1$/.exec(m[1]);
+			if (!p) return null; // computed ("$P") or missing
+			found.add(p[2]);
+		}
+		for (const m of line.matchAll(/BOXERY_CONF=(\S*)/g)) {
+			const v = /^(["']?)(.*?)\1;?$/.exec(m[1])?.[2] ?? "";
+			const home = homes.find((h) => v.startsWith(`${h}/.config/`));
+			const p = home ? /^boxery(?:-([a-z][a-z0-9-]{0,30}))?$/.exec(v.slice(`${home}/.config/`.length)) : null;
+			if (!p) return null; // a directory of its own, or computed
+			found.add(p[1] ?? "");
+		}
+	}
+	return found.size === 1 ? [...found][0] : null;
+}
+/**
  * Registered hosts with where each runs: {name, dir, default, destination, backend, same_as}. Reads only local
- * profile files (never sources them, never contacts a host). same_as names the other entries registered for
- * this profile directory: they are the same host.
+ * profile files (never sources them, never contacts a host). same_as names the other entries that are the same
+ * host: registered for this profile directory, or for the same destination and host-side profile (host add
+ * --profile P makes a directory of its own; hostSide). Grants and lease keys stay with each name's directory.
  * @returns {HostDescription[]}
  */
 export function describeHosts() {
 	let def = null;
 	try { def = resolveHost().name; } catch {}
 	const real = (/** @type {string} */ d) => { try { return realpathSync(d); } catch { return path.resolve(d); } };
-	const hosts = registeredHosts().map((h) => ({ host: h, real: real(h.dir) }));
-	return hosts.map(({ host: h, real: r }) => ({
-		name: h.name,
-		dir: h.dir,
-		default: h.name === def,
-		destination: hostDestination(h),
-		backend: hostBackend(h),
-		same_as: hosts.filter((o) => o.real === r && o.host.name !== h.name).map((o) => o.host.name),
+	const hosts = registeredHosts().map((h) => ({ host: h, real: real(h.dir), side: hostSide(h), backend: hostBackend(h) }));
+	// (One directory has one config, so one side: this stays transitive.)
+	const same = (/** @type {typeof hosts[number]} */ a, /** @type {typeof hosts[number]} */ b) => a.real === b.real || (a.side != null && a.side === b.side);
+	return hosts.map((a) => ({
+		name: a.host.name,
+		dir: a.host.dir,
+		default: a.host.name === def,
+		destination: hostDestination(a.host),
+		backend: a.backend,
+		same_as: hosts.filter((b) => b.host.name !== a.host.name && same(a, b)).map((b) => b.host.name),
 	}));
 }
 /**

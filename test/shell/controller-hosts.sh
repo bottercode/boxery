@@ -318,4 +318,45 @@ printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_rsa.pub"
 if printf '%s\n' "$out" | grep -q 'no --key given'; then echo 'noted a usual key' >&2; exit 1; fi
 out=$("$CLI" setup local --name k2 --host-bin "$keybin")
 printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_ed25519_github.pub"
-echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures, remote quoting and default keys'
+# Two names for one host-side profile are the same host (#221), though host add --profile P makes a profile
+# directory of its own: same destination and host profile, here also through a wrapper from before host
+# profiles (BOXERY_CONF=…/boxery-exe). ls lists that host once.
+export BOXERY_HOME="$tmp/same"
+samebin="$tmp/same-host"
+printf '#!/usr/bin/env bash\n[ "$1" != --profile ] || shift 2\ncase $1 in ls) echo '"'"'[{"name":"vm1","state":"running"}]'"'"' ;; esac\n' >"$samebin"; chmod +x "$samebin"
+printf '#!/usr/bin/env bash\nexport BOXERY_CONF="$HOME/.config/boxery-exe"\nexec "%s" "$@"\n' "$samebin" >"$tmp/boxery-host-exe"; chmod +x "$tmp/boxery-host-exe"
+mk() { mkdir -p "$tmp/same-$1"; printf '#\n' >"$tmp/same-$1/ssh_config"; printf '%s\n' "$2" >"$tmp/same-$1/config"; [ -z "${3:-}" ] || printf '%s\n' "$3" >"$tmp/same-$1/backend"; "$CLI" host add "$1" --config-dir "$tmp/same-$1" >/dev/null; }
+mk exe "HOST='local'
+HOST_BIN='$tmp/boxery-host-exe'" exe
+mk lab2 "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='exe'" exe
+mk lab3 "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='exe'"
+mk other "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='iso'"
+# Wrappers count only when they say it plainly: --profile P too; not a BOXERY_CONF of its own (other state),
+# a profile in a comment, or one computed at run time.
+wrap() { printf '#!/usr/bin/env bash\n%s\n' "$2" >"$tmp/wrap-$1"; chmod +x "$tmp/wrap-$1"; mk "$1" "HOST='local'
+HOST_BIN='$tmp/wrap-$1'"; }
+wrap flag "exec \"$samebin\" --profile exe \"\$@\""
+wrap elsewhere "export BOXERY_CONF=/srv/scratch/boxery-exe; exec \"$samebin\" \"\$@\""
+wrap computed "P=lab # like: boxery-host --profile exe
+exec \"$samebin\" --profile \"\$P\" \"\$@\""
+mkdir -p "$tmp/same-lab2/grants"; printf 'ssh-agent\t\t\n' >"$tmp/same-lab2/grants/vm1" # lab2's own grant
+"$CLI" host ls --json | jq -e '[.[] | {(.name): .same_as}] | add == {computed: [], elsewhere: [], exe: ["flag", "lab2", "lab3"], flag: ["exe", "lab2", "lab3"],
+	lab2: ["exe", "flag", "lab3"], lab3: ["exe", "flag", "lab2"], other: []}' >/dev/null
+out=$("$CLI" ls)
+[ "$(printf '%s\n' "$out" | grep -c '^vm1 ')" -eq 4 ] # exe (for flag, lab2 and lab3 too), other, elsewhere, computed
+printf '%s\n' "$out" | grep -q '^exe (default; also flag, lab2, lab3): exe on this machine$'
+printf '%s\n' "$out" | grep -A1 '^exe (default' | grep -q '^vm1 .* grants (lab2) ssh-agent$'
+if printf '%s\n' "$out" | grep -q '^\(lab[23]\|flag\)'; then echo 'ls listed a second name for one host' >&2; exit 1; fi
+# A wrapper on another machine can't be read: matched by directory only.
+mk far "HOST='user@fake'
+HOST_BIN='~/bin/boxery-host-exe'"
+mk farp "HOST='user@fake'
+HOST_PROFILE='exe'"
+"$CLI" host ls --json | jq -e 'map(select(.name == "far" or .name == "farp") | .same_as) == [[], []]' >/dev/null
+echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures, remote quoting, default keys and same hosts'

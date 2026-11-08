@@ -417,7 +417,7 @@ test("vm_info hosts says where each host runs, its recorded backend, and which n
 		assert.equal(lines[3], `root\tlocal\tlima\tsame host as root2\t${home}`);
 		const info = (await c.call("tools/list")).result.tools.find((t) => t.name === "vm_info");
 		assert.deepEqual(Object.keys(info.outputSchema.properties.hosts.items.properties).sort(), Object.keys(byName.alpha).sort());
-		assert.match(info.inputSchema.properties.host.description, /same profile directory.*same host/);
+		assert.match(info.inputSchema.properties.host.description, /same host-side profile.*same host/);
 	} finally {
 		for (const h of ["alpha", "beta"]) {
 			writeFileSync(path.join(profile(h), "config"), "# fake controller config\n");
