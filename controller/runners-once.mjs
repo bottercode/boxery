@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { hostCommand } from "../core/profile.mjs";
-import { CliError, VALID_VM, capture, die, note, warn } from "./lib.mjs";
+import { CliError, USAGE as USAGE_ERROR, VALID_VM, capture, die, note, warn } from "./lib.mjs";
 import { usageText } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
@@ -34,11 +34,11 @@ export async function runnersOnce(s, args) {
 	for (let i = 0; i < args.length; i += 2) {
 		const f = args[i], v = args[i + 1];
 		if (["-h", "--help"].includes(f)) { process.stdout.write(`${USAGE()}\n`); return; }
-		if (!["--repo", "--org", "--vms", "--labels", "--group"].includes(f)) die(`unknown argument: ${f}\n${USAGE()}`);
-		if (!v) die(`${f} needs a value\n${USAGE()}`);
+		if (!["--repo", "--org", "--vms", "--labels", "--group"].includes(f)) die(`unknown argument: ${f}\n${USAGE()}`, USAGE_ERROR);
+		if (!v) die(`${f} needs a value\n${USAGE()}`, USAGE_ERROR);
 		if (f === "--repo") repo = v; else if (f === "--org") org = v; else if (f === "--vms") vms = v; else if (f === "--labels") labels = v; else group = v;
 	}
-	if (repo && org) die("pass one of --repo OWNER/REPO or --org ORG");
+	if (repo && org) die("pass one of --repo OWNER/REPO or --org ORG", USAGE_ERROR);
 	if (/[^A-Za-z0-9-]/.test(org)) die(`invalid organization: ${org}`);
 	if (!group) group = "1";
 	else if (!/^[1-9][0-9]*$/.test(group)) die("--group must be a runner group id (1 = Default)");

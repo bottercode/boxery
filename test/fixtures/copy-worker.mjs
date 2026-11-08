@@ -32,7 +32,9 @@ try {
 			return loc.vm ? { path: loc.path, vm: loc.vm, sshConf: host.sshConf, label: `${host.name}/${loc.vm}` }
 				: { path: path.resolve(loc.path), label: "local" };
 		};
-		return streamCopy(endpoint(from), endpoint(to), { signal: ac.signal, metadataTimeoutMs: options.metadataTimeoutMs, cleanupTimeoutMs: options.cleanupTimeoutMs ?? 2000 }).then((bytes) => ({ bytes }));
+		// options.unreachable: what the host would say of a VM endpoint that can't be reached (core vmProblem).
+		const unreachable = options.unreachable === undefined ? undefined : async () => options.unreachable;
+		return streamCopy(endpoint(from), endpoint(to), { signal: ac.signal, metadataTimeoutMs: options.metadataTimeoutMs, cleanupTimeoutMs: options.cleanupTimeoutMs ?? 2000, unreachable }).then((bytes) => ({ bytes }));
 	});
 	result = { ok: true, ...value };
 } catch (e) {

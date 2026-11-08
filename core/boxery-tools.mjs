@@ -430,7 +430,7 @@ export async function infoAction(a, { host, current }) {
 		}
 		case "grants": {
 			const vm = target();
-			const grants = core.listGrants(vm);
+			const grants = await core.vmGrants(vm);
 			return { text: core.formatGrants(vm, grants), structured: { vm, grants } };
 		}
 		case "snaps": {

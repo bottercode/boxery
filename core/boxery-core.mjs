@@ -421,8 +421,9 @@ export async function sshOk(vm, script, opts = {}) {
 export const noSuchVm = (vm) => `no such vm: ${vm} on host ${currentHost().name} (boxery ls lists them)`;
 
 /** A VM's problem, for a person or an agent. known: the host's records explain it (no such VM, not running, a
- *  pool VM without a lease), so nothing can have run there; otherwise message is what ssh said.
- *  @typedef {{ message: string, known: boolean }} VmProblem */
+ *  pool VM without a lease); otherwise message is what ssh said. missing: the host has no such VM, so whatever
+ *  a failed connection may have done there is gone with it. (A VM found stopped may have stopped mid-command.)
+ *  @typedef {{ message: string, known: boolean, missing?: boolean }} VmProblem */
 
 /**
  * Why ssh to VM `vm` exited 255, or null when it can be reached after all. 255 is ssh's own failure but also a
@@ -431,27 +432,30 @@ export const noSuchVm = (vm) => `no such vm: ${vm} on host ${currentHost().name}
  * connection of its own, which keeps that stderr; if it connects, the 255 was the command's. Otherwise the
  * host's VM list says what to do, else what that connection printed. Costs a connection and a host call (each
  * bounded to 20 s), so only failures call it; the fast path (connect, shared masters) is unchanged. env: ssh's
- * environment.
- * @param {string} vm @param {{ env?: NodeJS.ProcessEnv }} [opts] @returns {Promise<VmProblem | null>}
+ * environment; signal: stop asking (resolves as unreachable).
+ * @param {string} vm @param {{ env?: NodeJS.ProcessEnv, signal?: AbortSignal }} [opts] @returns {Promise<VmProblem | null>}
  */
-export async function vmProblem(vm, { env } = {}) {
+export async function vmProblem(vm, { env, signal } = {}) {
 	assertName(vm);
 	const probe = await new Promise((/** @type {(r: { code: number | null, stderr: string }) => void} */ resolve) => {
 		const child = spawn("ssh", ["-F", currentHost().sshConf, "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", `${vm}.boxery`, "true"],
 			{ stdio: ["ignore", "ignore", "pipe"], ...(env ? { env } : {}) });
 		let stderr = "";
 		child.stderr.on("data", (/** @type {Buffer} */ d) => { if (stderr.length < 16 * 1024) stderr += d.toString(); });
-		const timer = setTimeout(() => child.kill(), 20_000);
-		child.on("error", (e) => { clearTimeout(timer); resolve({ code: null, stderr: e.message }); });
-		child.on("close", (code) => { clearTimeout(timer); resolve({ code, stderr }); });
+		const stop = () => child.kill();
+		const timer = setTimeout(stop, 20_000);
+		signal?.addEventListener("abort", stop, { once: true });
+		const done = (/** @type {{ code: number | null, stderr: string }} */ r) => { clearTimeout(timer); signal?.removeEventListener("abort", stop); resolve(r); };
+		child.on("error", (e) => done({ code: null, stderr: e.message }));
+		child.on("close", (code) => done({ code, stderr }));
 	});
 	if (probe.code === 0) return null;
 	const said = probe.stderr.split("\n").map((l) => l.trim()).filter(Boolean).slice(-3).join("; ");
 	let vms;
-	try { vms = /** @type {VmInfo[]} */ (await lifecycle.listVms({}, { signal: AbortSignal.timeout(20_000) })); }
+	try { vms = await listVmsWithin(20_000, signal); }
 	catch (e) { return { message: `VM "${vm}" unreachable over ssh: ${said || /** @type {Error} */ (e).message}`, known: false }; }
 	const v = vms.find((r) => r.name === vm);
-	if (!v) return { message: noSuchVm(vm), known: true };
+	if (!v) return { message: noSuchVm(vm), known: true, missing: true };
 	if (v.state && !["running", "idle"].includes(v.state))
 		return { message: /ing$/.test(v.state) ? `VM ${vm} is ${v.state}; try again when it's running (boxery ls shows its state)` : `VM ${vm} is ${v.state}; start it: boxery start ${vm}`, known: true };
 	if (v.lease) {
@@ -950,7 +954,9 @@ export async function copyTool({ from, to }, { current, localCwd = process.cwd()
 	};
 	const source = endpoint(src);
 	const destination = endpoint(dst, path.posix.basename(source.path));
-	const bytes = await streamCopy(source, destination, { signal });
+	// (Each endpoint on its own host: HOST/NAME:path may name another.)
+	const unreachable = (/** @type {CopyEndpoint} */ e) => withHost(e === source ? src.host : dst.host, () => vmProblem(/** @type {string} */ (e.vm), { signal }));
+	const bytes = await streamCopy(source, destination, { signal, unreachable });
 	const fmt = (/** @type {Loc & { host: HostProfile }} */ l, /** @type {CopyEndpoint} */ e) => `${l.vm ? `${l.host.name}/${l.vm}` : "local"}:${e.path}`;
 	return { text: `copied ${fmt(src, source)} → ${fmt(dst, destination)} (${bytes} bytes tar)` };
 }
@@ -1089,6 +1095,9 @@ process.exit(0);`;
 /** @type {() => Promise<VmInfo[]>} */
 export const listVms = async () => /** @type {any} */ (await lifecycle.listVms());
 
+/** listVms, given up after MS (or on signal): for a check that mustn't hang on a slow host. @param {number} ms @param {AbortSignal} [signal] @returns {Promise<VmInfo[]>} */
+const listVmsWithin = async (ms, signal) => /** @type {any} */ (await lifecycle.listVms({}, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms) }));
+
 /** VM sizes defined on the host: {default, shapes: {NAME: {cpus, mem, disk}}} (docs/shapes.md). */
 /** @type {() => Promise<Shapes>} */
 export const listShapes = () => lifecycle.hostJson(["shapes"]);
@@ -1173,6 +1182,18 @@ export function formatVms(vms) {
 	if (!outdated.length) return table;
 	// Patching restarts VMs and is the user's call: agents only point it out.
 	return `${table}\noutdated guest software: ${outdated.map((v) => `${v.name} (${(v.guest?.reasons ?? []).join(", ")})`).join("; ")}. Tell the user; they can update it with: boxery patch NAME`;
+}
+
+/** VM's grants (listGrants: this machine's records). With none recorded, the host is asked whether VM exists, so
+ *  a typo says "no such vm" rather than "no grants"; a host that can't be asked doesn't fail the listing.
+ *  @param {string} vm @returns {Promise<Grant[]>} */
+export async function vmGrants(vm) {
+	const grants = listGrants(assertName(vm));
+	if (grants.length) return grants;
+	let vms;
+	try { vms = await listVmsWithin(20_000); } catch { return grants; }
+	if (!vms.some((v) => v.name === vm)) throw new Error(noSuchVm(vm));
+	return grants;
 }
 
 /** @param {string} name @param {Grant[]} grants */

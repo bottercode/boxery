@@ -10,14 +10,14 @@ import { supervise } from "./boxery-operations.mjs";
 import { refreshBuild } from "./build-info.mjs";
 import { captureVm } from "./images.mjs";
 import { setLeaseKeys } from "./pool.mjs";
-import { fail, log, POOL_SNAP, sleep, validName, validNum } from "./util.mjs";
+import { fail, hint, log, POOL_SNAP, sleep, validName, validNum } from "./util.mjs";
 import { vmRecord } from "./vm-records.mjs";
+import { rebootIfRequired } from "./vms.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
 const PATCH_USAGE = hostUsage("patch");
-const BOOT_ID = "cat /proc/sys/kernel/random/boot_id";
 
 /** NAME|--all [--wait S] → {name, all, wait}. @param {string[]} args */
 export function parsePatchArgs(args) {
@@ -57,23 +57,6 @@ async function pushScript(rt) {
 	return ["set -e", ...files.map((f) => `mkdir -p "$(dirname ${f.path})"; printf %s '${f.b64}' | base64 -d >${f.path}.new; chmod ${f.mode} ${f.path}.new; mv -f ${f.path}.new ${f.path}`), ""].join("\n");
 }
 
-/** Restart NAME if its updates ask for it, and wait until it is back (a new boot id). @param {Runtime} rt @param {string} name @param {GuestEndpoint} ep */
-async function rebootIfRequired(rt, name, ep) {
-	if (await rt.guest.run(ep, "test -e /var/run/reboot-required", { quiet: true }) !== 0) return false;
-	const boot = (await rt.guest.output(ep, BOOT_ID)).out.trim();
-	log(`${name}: restarting it (the updates ask for it: /var/run/reboot-required)`);
-	await rt.guest.run(ep, "sudo systemctl reboot", { quiet: true }); // the connection may drop
-	const tries = Number(rt.env.BOXERY_SSH_WAIT_TRIES || 180);
-	for (let i = 0; i < tries; i++) {
-		await sleep(2000);
-		try {
-			const now = await rt.guest.output(await rt.vms.sshEndpoint(name, { quiet: true }), BOOT_ID);
-			if (now.code === 0 && now.out.trim() && now.out.trim() !== boot) return true;
-		} catch { /* not back yet */ }
-	}
-	return fail(`${name} did not come back after restarting (boxery ls; boxery start ${name})`);
-}
-
 /** The supervised worker: patch NAME while holding its lifecycle lock. @param {Runtime} rt @param {string[]} args */
 export async function patchVm(rt, args) {
 	const { name } = parsePatchArgs(args);
@@ -81,8 +64,8 @@ export async function patchVm(rt, args) {
 	rt.requireLock(name);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
 	const row = rt.poolRow(name);
-	if (row?.state === "BROKEN") fail(`${name} is a broken pool VM: fix it first (pool rm ${name}, then patch it and pool add ${name})`);
-	if (row && row.state !== "FREE") fail(`${name} is a pool VM with an active lease (${row.state.toLowerCase()}); patch it after the lease ends (or: patch ${name} --wait S)`);
+	if (row?.state === "BROKEN") fail(`${name} is a broken pool VM: fix it first (${hint(`pool rm ${name}`)}, then patch it and ${hint(`pool add ${name}`)})`);
+	if (row && row.state !== "FREE") fail(`${name} is a pool VM with an active lease (${row.state.toLowerCase()}); patch it after the lease ends (or: ${hint(`patch ${name} --wait S`)})`);
 	/** @type {GuestEndpoint} */
 	let ep;
 	try { ep = await rt.vms.sshEndpoint(name, { quiet: true }); } catch { return fail(`${name} is not running (start it first)`); }

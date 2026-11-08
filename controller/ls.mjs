@@ -6,7 +6,7 @@
 import { realpathSync } from "node:fs";
 import { describeHosts, listGrants, withHost } from "../core/boxery-core.mjs";
 import * as lifecycle from "../core/lifecycle.mjs";
-import { die, hostFailed, needHost, note, quit, say, select, usage, warn } from "./lib.mjs";
+import { BOXERY, die, hostFailed, needHost, note, quit, say, select, usage, warn } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 /** A row of listVms, as docs/cli.md describes `ls --json`.
@@ -119,7 +119,7 @@ function print(sections, { onlyRunning, refresh, grouped }) {
 		const unchecked = sec.vms.filter((v) => running(v) && v.guest?.checked_at == null).map((v) => v.name);
 		if (unchecked.length && !refresh) notes.push(`==> ${who}guest software not checked yet: ${unchecked.join(", ")} (ls --refresh reads it)`);
 		const outdated = sec.vms.filter((v) => v.guest?.status === "outdated").map((v) => v.name);
-		if (outdated.length) notes.push(`==> ${who}outdated guest software on ${outdated.join(", ")}; update with: boxery${grouped ? ` --host ${sec.name}` : ""} patch NAME|--all`);
+		if (outdated.length) notes.push(`==> ${who}outdated guest software on ${outdated.join(", ")}; update with: ${grouped ? `boxery --host ${sec.name}` : BOXERY} patch NAME|--all`);
 	}
 	say(out.join("\n") || none);
 	if (notes.length) note(notes.join("\n"));

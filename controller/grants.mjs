@@ -4,7 +4,7 @@
 // profile's config says GRANT_CONFIRM=off (read from the file literally, never from the environment).
 import { closeSync, openSync, readFileSync, readSync, writeSync } from "node:fs";
 import path from "node:path";
-import { formatGrants, hostBackend } from "../core/boxery-core.mjs";
+import { formatGrants, hostBackend, vmGrants } from "../core/boxery-core.mjs";
 import { parseGrantArgs } from "../core/grant-approval.mjs";
 import { addGrants, applyGrants, grantCommand, grantPrompt, listGrants, revokeGrants, storedSpecs } from "../core/grants.mjs";
 import { reapplyPushed } from "../core/grant-operations.mjs";
@@ -98,8 +98,8 @@ export async function grantsCommand(s, [vm, sub, flag]) {
 			const out = await applyGrants(vm, interactive);
 			if (flag === "--quiet") for (const line of out.split("\n")) { if (line.startsWith("boxery:")) note(line); }
 			else say(out);
-		} else if (sub === "--json") say(JSON.stringify(listGrants(vm)));
-		else if (sub === undefined) say(formatGrants(vm, listGrants(vm)));
+		} else if (sub === "--json") say(JSON.stringify(await vmGrants(vm)));
+		else if (sub === undefined) say(formatGrants(vm, await vmGrants(vm)));
 		else usage("grants");
 	} catch (e) { if (e instanceof CliError) throw e; die(/** @type {Error} */ (e).message); }
 }

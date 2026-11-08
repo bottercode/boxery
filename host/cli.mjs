@@ -21,7 +21,7 @@ import { runners } from "./runners.mjs";
 import { createRuntime } from "./runtime.mjs";
 import { backends, capabilities, checkOperation } from "./capabilities.mjs";
 import { addKey, buildBase, init, profiles } from "./setup.mjs";
-import { fail, jsonArray, log, print, readFd, table, validName } from "./util.mjs";
+import { fail, hint, jsonArray, log, print, readFd, table, validName } from "./util.mjs";
 import { HOST_COMMANDS, hostCommandHelp, hostHelp, hostResolve, hostUnknown, hostUsage } from "./help.mjs";
 import { addVmSize, vmRecords } from "./vm-records.mjs";
 import { fork, newVm, resize, rm, start, stop } from "./vms.mjs";
@@ -95,7 +95,7 @@ async function ls(rt, args) {
 	print(table([16, 10, 18, 12, 10, 9, 10], [["NAME", "STATE", "SSH", "DISK", "SHAPE", "KIND", "LEASE", "GUEST"],
 		...vms.map((v) => [v.name, v.state ?? "-", fmtSsh(v), fmtDisk(v), v.shape ?? "-", v.desktop ? "desktop" : "headless", v.lease?.state ?? "-", v.guest.status])]));
 	const outdated = vms.filter((v) => v.guest.status === "outdated");
-	if (outdated.length) log(`outdated guest software: ${outdated.map((v) => `${v.name} (${v.guest.reasons.join(", ")})`).join("; ")}. Update with: boxery patch NAME|--all`);
+	if (outdated.length) log(`outdated guest software: ${outdated.map((v) => `${v.name} (${v.guest.reasons.join(", ")})`).join("; ")}. Update with: ${hint("patch NAME|--all")}`);
 	const unchecked = vms.filter((v) => v.guest.checked_at == null && ["running", "idle"].includes(v.state ?? ""));
 	if (unchecked.length && !refresh) log(`guest software not checked yet: ${unchecked.map((v) => v.name).join(", ")} (ls --refresh reads it)`);
 }

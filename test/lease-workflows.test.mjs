@@ -36,6 +36,14 @@ function fixture() {
 	return { flows, state, events, logs, store, backend, journal, kinds: () => events.map((e) => e[0]) };
 }
 
+test("a broken reset's hint names the commands as the caller's hint() spells them", async () => {
+	const f = fixture();
+	f.flows.hint = (command) => `boxery --host lab ${command}`;
+	f.backend.restore = async () => { throw new Error("guest failure"); };
+	await f.flows.reset("p1", 2, "epoch");
+	assert.match(f.logs[0], /fix it, then: boxery --host lab pool rm p1 && boxery --host lab pool add p1\)/);
+});
+
 test("reset journals, revokes the lease's token and grants first, and commits only after readiness and management keys", async () => {
 	const f = fixture();
 	await f.flows.reset("p1", "2", "epoch");
@@ -54,7 +62,7 @@ for (const kind of ["restore", "waitReady", "stepClock", "setKeys"]) {
 		await f.flows.reset("p1", 2, "epoch");
 		assert.deepEqual(f.events.at(-2), ["finish", "p1", 2, "BROKEN"]);
 		assert.deepEqual(f.events.at(-1), ["done", "intent-id"]);
-		assert.match(f.logs[0], /BROKEN/);
+		assert.match(f.logs[0], /BROKEN \(fix it, then: boxery-host pool rm p1 && boxery-host pool add p1\)/);
 		if (kind === "restore") assert.ok(!f.kinds().includes("waitReady"));
 	});
 }
