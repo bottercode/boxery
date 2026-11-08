@@ -86,6 +86,7 @@ Snapshots and forks are built on one backend primitive, the image (a copy of a V
 
 ```bash
 boxery ssh demo [cmd…]                       # interactive shell (or: ssh demo.boxery)
+boxery ssh demo@lab                         # a VM on registered host lab (no default change)
 boxery run demo git log --oneline -5         # exact argv, like docker exec; runs in ~/project
 boxery run demo --cwd app pnpm test          # in ~/project/app
 boxery run demo bash -c 'make test 2>&1 | tail'   # a shell line: bash -c
@@ -96,6 +97,11 @@ boxery sessions demo [--json]                # list tmux sessions
 ```
 
 `run` works like `docker exec` / `kubectl exec`: the command gets exactly the arguments you pass, and nothing in them (quotes, `$`, `~`, globs, `;`) is re-parsed in the VM. For pipes, `&&`, `~` or `$VAR`, run a shell explicitly with `bash -c '…'` (how `run` used to treat every command). A whole command line passed as one argument (`boxery run demo 'make test'`) is looked up as a single command name and fails with a hint. An argument that is `~`, starts with `~/` or contains `$VAR`/`${…}` reaches the command literally and exits 0, so `run` adds a note on stderr pointing at `bash -c` (not when the command is a shell or an interpreter such as awk, perl or jq, whose code uses `$`). Like the `vm_bash` tool, `run` starts in `~/project` (home if there is none), and a relative `--cwd DIR` is under `~/project`; `~/` expands in the VM and absolute paths are used as is. `--` ends `run`'s own options. The exit code is the command's. `ssh NAME cmd…` keeps plain ssh semantics.
+
+`ssh NAME@HOST [CMD...]` is shorthand for `--host HOST ssh NAME [CMD...]`.
+`HOST` is a registered Boxery host, not an SSH destination or username. A matching
+`--host` is allowed; conflicting selectors are rejected before connecting. The
+shorthand does not change the default host and works even when none is selected.
 
 When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that run commands in a VM (`vm_bash`, `vm_jobs`, the file and desktop tools) report the same.
 
@@ -256,7 +262,7 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 | Command | What it does |
 |---|---|
-| `boxery ssh NAME [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
+| `boxery ssh NAME[@HOST] [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
 | `boxery run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]` | Run a command in ~/project, args as given (like docker exec) [→](#shell-and-in-vm-agents) |
 | `boxery cp FROM TO` | Copy files and directories to, from and between VMs [→](copy.md) |
 | `boxery desktop NAME [--no-open]` | Open a VM's desktop in your browser (noVNC over ssh) [→](#desktop-and-ports) |
