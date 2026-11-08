@@ -163,8 +163,15 @@ for c in "run nosuch true" "ssh nosuch true" "jobs nosuch" "sessions nosuch" "lo
 done
 rc=0; out=$("$A" run w1 bash -c 'exit 255' 2>&1) || rc=$?
 [[ $rc == 255 && $out != *boxery:* ]] && ok "run: the command's own exit 255 says nothing more" || bad "run exit 255: rc=$rc $out"
+# desktop, cp and grants say so too (#216); cp leaves nothing to clean up, since nothing could be staged.
+echo data >"$tmp/cpfile"
+for c in "desktop nosuch --no-open" "cp nosuch:x $tmp/cpdest" "cp $tmp/cpfile nosuch:x" "grants nosuch" "grants nosuch --json"; do
+	rc=0; out=$(eval "\"\$A\" $c" 2>&1 </dev/null) || rc=$?
+	[[ $rc == 1 && $out == "boxery: no such vm: nosuch on host local (boxery ls lists them)" ]] && ok "${c%% /*}…: no such vm, exit 1, and only that" || bad "$c: rc=$rc $out"
+done
+left=''; for f in "$tmp"/.boxery-copy*; do [[ -e $f ]] && left=$f; done
+[[ ! -e $tmp/cpdest && -z $left ]] && ok "cp from a missing VM creates nothing here" || bad "cp left: $tmp/cpdest $left"
 [ "$("$A" leases --json)" = '[]' ] && ok "leases --json with none → []" || bad "leases --json empty"
-[ "$("$A" grants nogrants --json)" = '[]' ] && ok "grants --json with none → []" || bad "grants --json empty"
 "$A" snap w1 s1 >/dev/null 2>&1; [ "$("$A" snaps w1 --json | jq -c 'map({name})')" = '[{"name":"s1"}]' ] && ok "snaps --json via controller" || bad "snaps --json: $("$A" snaps w1 --json 2>&1)"
 # Hints name the command the person typed: boxery-host only when it was called directly, --host when given
 hints() { { "$@" >/dev/null; } 2>&1 || true; }
@@ -177,6 +184,7 @@ hints() { { "$@" >/dev/null; } 2>&1 || true; }
 
 # --- edge (http:) grants: secret goes to the host proxy's route file, never into the VM
 "$A" new e1 >/dev/null 2>&1
+[ "$("$A" grants e1 --json)" = '[]' ] && [ "$("$A" grants e1)" = 'no grants for e1' ] && ok "grants with none → [] / no grants" || bad "grants empty: $("$A" grants e1 --json 2>&1)"
 mkdir -p "$tmp/vms/e1/home/.boxery"; printf 'e1:tok123' >"$tmp/vms/e1/home/.boxery/token"
 export EDGE_SECRET='ghp_EDGESECRET42'
 "$A" grant e1 github --cmd 'printf %s "$EDGE_SECRET"' http:registry.npmjs.org --cmd 'echo npm_EDGE2' http:api.example.com --auth header:X-Api-Key --cmd 'echo k3y' --readonly >/dev/null 2>&1 && ok "grant http + github preset" || bad "grant http: $("$A" grant e1 github --cmd 'printf %s "$EDGE_SECRET"' 2>&1)"

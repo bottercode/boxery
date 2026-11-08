@@ -136,6 +136,7 @@ async function metadata(endpoint, script, label, timeout = 30_000) {
 	} catch (e) {
 		error = e;
 		if (worker.exitCode === 255 || worker.exitSignal) error.remoteUnverified = true;
+		if (worker.exitCode === 255) error.sshFailed = true;
 	} finally {
 		clearTimeout(timer);
 		await terminate([worker]);
@@ -270,8 +271,14 @@ async function commitConfined(destination, data, basename) {
 	await rename(staged, target);
 }
 
-/** @param {CopyEndpoint} source @param {CopyEndpoint} destination @param {{ signal?: AbortSignal, metadataTimeoutMs?: number, cleanupTimeoutMs?: number }} [opts] */
-export async function streamCopy(source, destination, { signal, metadataTimeoutMs = 30_000, cleanupTimeoutMs = 15_000 } = {}) {
+/**
+ * unreachable(endpoint): why a VM endpoint's preparation ssh exited 255 (core vmProblem), or null. For a VM
+ * the host doesn't have (missing), its message replaces the failure and no staging is left to clean or
+ * report; any other answer is added to the failure, whose cleanup goes ahead as usual.
+ * @param {CopyEndpoint} source @param {CopyEndpoint} destination
+ * @param {{ signal?: AbortSignal, metadataTimeoutMs?: number, cleanupTimeoutMs?: number, unreachable?: (endpoint: CopyEndpoint) => Promise<{ message: string, known: boolean, missing?: boolean } | null> }} [opts]
+ */
+export async function streamCopy(source, destination, { signal, metadataTimeoutMs = 30_000, cleanupTimeoutMs = 15_000, unreachable } = {}) {
 	if (signal?.aborted) throw aborted();
 	const basename = path.posix.basename(source.path);
 	if (!basename) throw new Error("cannot copy the filesystem root");
@@ -289,6 +296,16 @@ export async function streamCopy(source, destination, { signal, metadataTimeoutM
 	const prepare = async (endpoint, script, pending) => {
 		try { return await metadata(endpoint, script, `prepare ${endpoint.label}`, metadataTimeoutMs); }
 		catch (/** @type {any} */ error) {
+			const problem = error.sshFailed && unreachable && !signal?.aborted ? await unreachable(endpoint).catch(() => null) : null;
+			if (problem?.missing) {
+				// The host has no such VM: any staging went with it, so there is nothing to clean or report.
+				for (const stage of pending) stages.splice(stages.indexOf(stage), 1);
+				throw new Error(problem.message);
+			}
+			// Otherwise (stopped meanwhile, lease gone, unreachable) the mkdir may still have run: say why, and
+			// keep the stages for cleanup and its report.
+			if (problem?.known) error.message = `${problem.message} (${error.message})`;
+			else if (problem) error.message += ` (${problem.message})`;
 			// A lost SSH client/status cannot prove that a remote mkdir stopped. Even an
 			// absent directory during cleanup does not rule out a late queued preparation.
 			if (error.remoteUnverified) for (const stage of pending) stage.preparationUnverified = true;

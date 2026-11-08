@@ -105,7 +105,7 @@ boxery sessions demo [--json]                # list tmux sessions
 `--host` is allowed; conflicting selectors are rejected before connecting. The
 shorthand does not change the default host and works even when none is selected.
 
-When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that run commands in a VM (`vm_bash`, `vm_jobs`, the file and desktop tools) report the same.
+When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` (and `cp`, which exits 1; see [Copying files](copy.md)) say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that reach a VM (`vm_bash`, `vm_jobs`, `vm_copy`, the file and desktop tools) report the same. `grants NAME` says `no such vm` too.
 
 ### Files
 
@@ -452,7 +452,7 @@ VM sizes the host offers, after merging its `shapes.json` over the built-ins ([S
 
 #### `boxery grants NAME --json`
 
-Local grant records (names and paths only; values are never stored or printed).
+Local grant records (names and paths only; values are never stored or printed). With none recorded, the host is asked whether NAME exists: `[]` for a VM without grants, `no such vm: NAME` (exit 1) for one the host doesn't list. A host that can't be reached doesn't fail the listing.
 
 ```json
 [
