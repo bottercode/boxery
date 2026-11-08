@@ -167,6 +167,6 @@ rc=0; out=$("$A" runners once --vms pet 2>&1) || rc=$?
 [[ $rc != 0 && $out == *"no pool VM here can run a runner (pet: no runner)"* && $out == *"--layers github-runner"* ]] && ok "a VM without the runner layer: says how to make one" || bad "rc $rc: $out"
 [[ $(state pet) == free ]] && ok "...and pet was never leased (or reset)" || bad "pet: $(state pet)"
 
-out=$("$A" help) && [[ $out == *"runners once [--repo OWNER/REPO | --org ORG]"*"local runner"*"runners status|start|stop|config|token   host runners"* ]] && ok "controller usage: local runners and host runners" || bad "usage"
+out=$("$A" runners --help) && [[ $out == *"runners once [--repo OWNER/REPO | --org ORG]"*"runners status"*"once: a local runner"*"host runners (admin)"* ]] && ok "controller usage: local runners and host runners" || bad "usage: $out"
 
 echo "passed: $pass  failed: $fail"; ((fail == 0))
