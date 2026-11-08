@@ -8,7 +8,9 @@
 
 ## `boxery` (your laptop)
 
-`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
+`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`. `boxery --version` (or `-V`) is `boxery version`.
+
+Exit status: `0` on success; a command that runs something in the VM (`run`, `ssh`, `attach`, `wait` and the like) exits with its status, so a script can't tell boxery's codes from the command's. boxery's own failures exit `1`, and its usage errors (an unknown command or flag, a missing argument or flag value, arguments that don't fit the command's usage) exit `2`. A value that is refused (an invalid name, a VM that doesn't exist) is a failure, `1`, and so is a usage error that the host reports for a command boxery passes to it (`images`, `pool`, `runners`, …).
 
 - [All commands](#all-commands), generated from the same help
 

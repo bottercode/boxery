@@ -15,8 +15,10 @@ export class CliError extends Error {
 }
 /** @param {string} message @param {number} [exitCode] @returns {never} */
 export const die = (message, exitCode = 1) => { throw new CliError(message, exitCode); };
+/** The exit status of a usage error (a missing argument, an unknown flag): docs/cli.md. */
+export const USAGE = 2;
 /** A usage error: COMMAND's usage lines from its help (controller/usage.mjs usageText). @param {string} command @param {{ sub?: string, hint?: string }} [opts] @returns {never} */
-export const usage = (command, opts) => die(usageText(command, opts));
+export const usage = (command, opts) => die(usageText(command, opts), USAGE);
 /** Exit with CODE, saying nothing (what failed has already said why). @param {number} exitCode @returns {never} */
 export const quit = (exitCode) => { throw new CliError("", exitCode); };
 /** @param {string} message */
@@ -28,12 +30,13 @@ export const note = (text) => { process.stderr.write(text.endsWith("\n") ? text 
 
 export { VALID_NAME as VALID_VM, VALID_SNAP } from "../core/boxery-core.mjs";
 import { VALID_NAME as VALID_VM } from "../core/boxery-core.mjs";
-/** @param {string | undefined} name @returns {string} */
-export const needVm = (name) => (VALID_VM.test(name ?? "") ? /** @type {string} */ (name) : die(`invalid VM name: ${name ?? ""}`));
+/** A VM name; none at all is a usage error. @param {string | undefined} name @returns {string} */
+export const needVm = (name) => (VALID_VM.test(name ?? "") ? /** @type {string} */ (name) : name ? die(`invalid VM name: ${name}`) : die("missing VM name (see: boxery COMMAND --help)", USAGE));
 
 /** VALUE as a plain number (no leading zeros), at least MIN. @param {string} flag @param {string | undefined} value @param {number} [min] */
 export function num(flag, value, min = 0) {
-	if (!/^[0-9]+$/.test(value ?? "")) die(`${flag} must be a whole number`);
+	if (value == null) die(`${flag} needs a value`, USAGE);
+	if (!/^[0-9]+$/.test(value)) die(`${flag} must be a whole number`);
 	const v = /** @type {string} */ (value).replace(/^0+/, "") || "0";
 	if (v.length > 9) die(`${flag} is too large`);
 	if (Number(v) < min) die(`${flag} must be at least ${min}`);

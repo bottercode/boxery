@@ -52,6 +52,13 @@ test("an unknown command is a short error with a suggestion, exit 2", () => {
 	assert.equal(boxery("help", "frobnicate").code, 2);
 });
 
+test("--version and -V are boxery version", () => {
+	const v = boxery("version");
+	assert.equal(v.code, 0);
+	assert.match(v.out, /^controller {2}\S/);
+	for (const flag of ["--version", "-V"]) assert.deepEqual(boxery(flag), v, flag);
+});
+
 test("no ANSI escapes when stdout is not a terminal", () => {
 	assert.doesNotMatch(boxery("help").out + boxery("run", "--help").out, /\x1b\[/);
 });
