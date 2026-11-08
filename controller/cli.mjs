@@ -291,8 +291,9 @@ export const COMMANDS = {
 	setup: {
 		preHost: true,
 		help: {
-			group: "setup", summary: "configure a VM host (local = this machine) and register your ssh key",
-			usage: ["setup user@host|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]", "setup local --backend openshell [--gateway G] [--image OCI] [--policy PATH] [--provider P | --no-providers] [--yes]"],
+			group: "setup", summary: "configure a VM host (local = this machine), register your ssh key",
+			usage: ["setup user@host|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]", "setup local --backend openshell [OPTIONS]"],
+			details: ["OpenShell has its own options (gateway, image, policy, providers): boxery setup local --backend openshell --help."],
 			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: your first ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery backends lists them)"]],
 			examples: [["A Linux box you reach over ssh", "boxery setup you@my-host"], ["This machine", "boxery setup local"]],
 			seeAlso: ["host", "build-base", "backends"], docs: "install.md",
@@ -447,7 +448,7 @@ export const COMMANDS = {
 	},
 	cp: {
 		help: {
-			group: "use", summary: "copy files or directories between this machine and VMs, or VM to VM", usage: ["cp FROM TO"],
+			group: "use", summary: "copy files and directories to, from and between VMs", usage: ["cp FROM TO"],
 			details: ["Locations: local:PATH, NAME:PATH (a VM on the selected host) or HOST/NAME:PATH; a bare PATH is on this machine. VM paths are relative to ~/project. Directories copy recursively."],
 			examples: [["This machine to a VM (~/project/repo.bundle)", "boxery cp ./repo.bundle demo:"], ["VM to VM, across named hosts", "boxery cp demo:out.zip hornet/worker:in.zip"]],
 			docs: "copy.md",
@@ -491,7 +492,7 @@ export const COMMANDS = {
 	logs: {
 		help: {
 			group: "jobs", summary: "show a job's output (the last 200 lines)", usage: ["logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]"],
-			flags: [["-f, --follow", "Follow until the job ends"], ["-n, --lines N", "The last N lines"], ["--bytes N", "Clip each read to its last N bytes"], ["--strip-ansi", "Remove colours and terminal escapes"]],
+			flags: [["-f, --follow", "Follow until the job ends"], ["-n, --lines N", "The last N lines"], ["--tail N", "Same as --lines"], ["--bytes N", "Clip each read to its last N bytes"], ["--strip-ansi", "Remove colours and terminal escapes"]],
 			docs: "cli.md#background-command-jobs",
 		},
 		run: async (s, args) => { needHost(s); await (await import("./jobs.mjs")).logs(s, args); },
@@ -517,6 +518,7 @@ export const COMMANDS = {
 		help: {
 			group: "access", summary: "give a VM access to something on this machine (asks first)", usage: ["grant NAME SPEC... [--cmd CMD]"],
 			details: ["SPEC is one of:\n  llm:chatgpt|openai|anthropic|ollama   LLM access (VMs have none without it)\n  github [--readonly]                   GitHub over HTTPS; the token stays here\n  http:HOST --cmd CMD [--auth bearer|basic:USER|header:NAME] [--readonly]\n                                        an HTTP API; the secret never enters the VM\n  ssh-agent                             forward your ssh agent\n  env:VAR [--cmd CMD]                   push an environment variable\n  file:LOCAL[=REMOTE]                   push a file", "Adding access prompts on your terminal and defaults to No."],
+			flags: [["--cmd CMD", "env: and http: grants: the command on this machine that prints the secret"], ["--auth A", "http: grants: bearer (default), basic:USER or header:NAME"], ["--readonly", "http: and github grants: GET/HEAD and git fetch only"]],
 			examples: [["Let the VM use your Anthropic subscription", "boxery grant demo llm:anthropic"], ["Read-only GitHub", "boxery grant demo github --readonly"]],
 			seeAlso: ["revoke", "grants"], docs: "grants.md",
 		},
@@ -538,8 +540,8 @@ export const COMMANDS = {
 	// ------------------------------------------------ pool & runners
 	acquire: {
 		help: {
-			group: "pool", summary: "lease a VM from the shared pool (prints NAME LEASE_ID)", usage: ["acquire [--ttl S] [--wait S]"],
-			flags: [["--ttl S", "Lease length in seconds (default 1800)"], ["--wait S", "Wait up to S seconds for a free VM"]],
+			group: "pool", summary: "lease a VM from the shared pool (prints NAME LEASE_ID)", usage: ["acquire [--ttl S] [--wait S] [--holder H]"],
+			flags: [["--ttl S", "Lease length in seconds (default 1800)"], ["--wait S", "Wait up to S seconds for a free VM"], ["--holder H", "Who holds the lease, as the host shows it (default: user@machine)"]],
 			seeAlso: ["renew", "release", "leases"], docs: "pool.md",
 		},
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "acquire", args); },

@@ -13,7 +13,7 @@ import { OPENSHELL_NO_PROVIDERS, openShellProviders } from "../host/openshell-co
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const NAME = /^[a-z][a-z0-9-]{0,30}$/;
 const INSTALL = "Install OpenShell and start its gateway using https://github.com/NVIDIA/OpenShell#quickstart";
-const HELP = `boxery setup local --backend openshell [options]
+export const HELP = `boxery setup local --backend openshell [options]
   --name NAME          Boxery host name (default: restricted)
   --gateway NAME       Existing OpenShell gateway (auto-select only when exactly one exists)
   --register-local     Register the package-managed https://127.0.0.1:17670 gateway
