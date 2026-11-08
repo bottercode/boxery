@@ -2,6 +2,19 @@
 
 boxery gives coding agents VMs. [ARCHITECTURE.md](ARCHITECTURE.md) explains how it fits together and [CONTRIBUTING.md](CONTRIBUTING.md) how to test it; read them before a change that crosses parts. This file is how to work here.
 
+## Goals
+
+Weigh every change against these. When two of them pull in different directions, say so to the user rather than picking quietly.
+
+- **The easiest way to give coding agents VMs.** `boxery new demo` should just work: sensible defaults for everything, no flag needed for the common case, and setup an agent can do from one prompt. Add a flag or setting only when a default can't serve. Every error says what went wrong and what to do about it.
+- **Built for agents.** The agent is the main user. It stays on the user's machine with its own login and setup, and the VM is where it works. Tool names, descriptions and the MCP instructions are product surface: write them for a model to read, and check changes to them with the [evals](evals/README.md).
+- **Any host, the same tools.** A Mac, a Linux box and hosted providers, one or several at once, behave the same way to the agent. A feature that one backend can't offer is declared as a capability, not left to fail.
+- **Secrets go to as few places as possible.** Credentials stay on the host; a VM gets a revocable token and nothing else until a person grants it more. Never trade that away for convenience, for example by skipping grant approval.
+- **Fast, disposable VMs.** Creating, forking, snapshotting and resetting should be cheap enough that throwing a VM away is the normal thing to do. Measure changes on those paths.
+- **Safe to share and to crash.** Several agents can share a pool through leases, and an operation killed halfway is finished or rolled back by recovery. Keep both true when changing lifecycle code ([lifecycle](docs/lifecycle.md)).
+
+Not goals for now: macOS or Windows guests, GPU passthrough, scheduling across hosts, isolating mutually distrustful users of one host ([ARCHITECTURE.md](ARCHITECTURE.md#goals)).
+
 ## One implementation, several front-ends
 
 The CLI, the MCP server and the pi extension are front-ends over the same core. Put behaviour in the core so all three get it, and give a front-end only what is truly its own (argument parsing, the terminal, a client's dialog). Tests fail when a tool or command exists on one side only; when that happens, map it to its counterpart or say why it has none, rather than silencing the test.
@@ -16,12 +29,12 @@ Logic lives in Node. Bash is used where it does a job better, and each place has
 
 - **Entry shims** (`boxery`, `boxery-host`) run before Node does: they find the right Node over a non-interactive ssh, resolve npm's symlinks, and pass arguments on byte for byte.
 - **`connect`** is the ssh ProxyCommand for every new VM connection. Starting Node there would add about 50 ms to each one, so it stays a Bash fast path to `nc`.
-- **Backends** are thin wrappers around hypervisor CLIs (`virsh`, `limactl`, ssh), one function per process, with arguments as argv. When a backend needs JSON or HTTP, it calls a Node helper (as boat's REST client does) instead of growing shell.
-- **The job runner** is sent into the VM with each job. It only keeps the job alive in its own process group and records its real exit code, and a shell does that without a Node process per job.
+- **Backends** are thin wrappers around a hypervisor's command line (`virsh`, `limactl`, ssh), one function per process, with arguments as argv. A backend whose work is an HTTP API is a Node module behind a Bash contract file (boat, OpenShell); add JSON or HTTP handling there, not in shell.
+- **What runs in the guest** (image layers, the job runner, the grant applier): Node may not be installed yet, and they are sent each time, so a VM always runs the caller's version.
 
-These must run under bash 3.2. On macOS (controllers, Lima hosts) `/bin/bash` is 3.2, and over a non-interactive ssh it is usually the bash on PATH. CI checks them under 3.2.
+The host-side pieces must run under bash 3.2. On macOS (controllers, Lima hosts) `/bin/bash` is 3.2, and over a non-interactive ssh it is usually the bash on PATH. CI checks them under 3.2. Data both languages need is kept once, as data both read (the host settings list), not as a copy in each.
 
-None of this is fixed. When a reason stops holding or a better one appears, moving code between Bash and Node is fine. Say why in the PR, keep the contract it serves (argv, output, exit codes) and the tests that pin it, and update the docs that explain the split ([host modules](docs/host-modules.md), the [host-in-Node plan](docs/plans/2026-11-01-host-orchestration-in-node.md)). What to avoid is putting new logic in Bash just because the file you are in is Bash.
+None of this is fixed. When a reason stops holding or a better one appears, moving code between Bash and Node is fine. Say why in the PR, keep the contract it serves (argv, output, exit codes) and the tests that pin it, and update the docs that explain the split (the "Node for logic, Bash at the edges" entry in [ARCHITECTURE.md](ARCHITECTURE.md#design-decisions), [host modules](docs/host-modules.md)). What to avoid is putting new logic in Bash just because the file you are in is Bash.
 
 ## Boundaries and contracts
 
