@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:os";
 import { acquireLease, leaseRows, localLeases, releaseLease, renewLease } from "../core/leases.mjs";
-import { die, hostFailed, note, quit, say, usage } from "./lib.mjs";
+import { USAGE, die, hostFailed, note, quit, say, usage } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 /** Like `date`: the local format people read elsewhere in the CLI. @param {number} t unix seconds */
@@ -20,8 +20,9 @@ function parse(a, flags) {
 	const out = {};
 	for (let i = 0; i < a.length; i += 2) {
 		const key = flags[a[i]];
-		if (!key) die(`unknown flag ${a[i]}`);
-		out[key] = a[i + 1] ?? "";
+		if (!key) die(`unknown flag ${a[i]}`, USAGE);
+		if (a[i + 1] == null) die(`${a[i]} needs a value`, USAGE);
+		out[key] = a[i + 1];
 	}
 	return out;
 }

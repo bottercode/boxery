@@ -12,7 +12,7 @@ import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
-import { CliError, VALID_SNAP, VALID_VM, commandLine, die, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
 import { registerCommands, renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
@@ -42,14 +42,14 @@ async function cmdNew(s, args) {
 	const specs = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i], v = args[i + 1];
-		if (a === "--from") { if (!/^[a-z][a-z0-9-]{0,30}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v ?? "")) die(`invalid image name: ${v ?? ""} (use VM@SNAP)`); from = v; i++; }
-		else if (a === "--grant") { if (v == null) die("--grant needs a value"); specs.push(v); i++; }
+		if (a === "--from") { if (v == null) die("--from needs a value", USAGE); if (!/^[a-z][a-z0-9-]{0,30}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v ?? "")) die(`invalid image name: ${v ?? ""} (use VM@SNAP)`); from = v; i++; }
+		else if (a === "--grant") { if (v == null) die("--grant needs a value", USAGE); specs.push(v); i++; }
 		else if (a === "--agent-forward") specs.push("ssh-agent");
 		else if (a === "--headless") headless = true;
-		else if (a === "--layers") { if (v == null) die("--layers needs a value"); if (!/^[a-z0-9,-]+$/.test(v)) die(`invalid layer list: ${v}`); layers = v; i++; }
-		else if (a === "--shape") { if (v == null) die("--shape needs a value"); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
-		else if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
-		else if (a.startsWith("-")) die(`unknown flag ${a}`);
+		else if (a === "--layers") { if (v == null) die("--layers needs a value", USAGE); if (!/^[a-z0-9,-]+$/.test(v)) die(`invalid layer list: ${v}`); layers = v; i++; }
+		else if (a === "--shape") { if (v == null) die("--shape needs a value", USAGE); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
+		else if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`, USAGE); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
+		else if (a.startsWith("-")) die(`unknown flag ${a}`, USAGE);
 		else name = a;
 	}
 	needVm(name);
@@ -67,10 +67,10 @@ async function cmdFork(s, args) {
 	const size = {};
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i], v = args[i + 1];
-		if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
-		else if (a === "--shape") { if (v == null) die("--shape needs a value"); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
+		if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`, USAGE); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
+		else if (a === "--shape") { if (v == null) die("--shape needs a value", USAGE); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
 		else if (a === "--grants") copyGrants = true;
-		else if (a.startsWith("-")) die(`unknown flag ${a}`);
+		else if (a.startsWith("-")) die(`unknown flag ${a}`, USAGE);
 		else { needVm(a); if (!src) src = a; else dsts.push(a); }
 	}
 	if (!src || !dsts.length) usage("fork");
@@ -92,7 +92,7 @@ async function cmdRun(s, args) {
 	if (!args.length || ["-h", "--help"].includes(args[0])) {
 		const h = COMMANDS.run;
 		if ("help" in h) process.stdout.write(renderCommand("run", h.help));
-		if (!args.length) throw new CliError("", 1);
+		if (!args.length) throw new CliError("", USAGE);
 		return;
 	}
 	const name = needVm(args[0]);
@@ -364,9 +364,10 @@ export const COMMANDS = {
 			needHost(s); needVm(n);
 			/** @type {Record<string, string>} */
 			const size = {};
+			if (!rest.length) usage("resize");
 			for (let i = 0; i < rest.length; i += 2) {
-				if (!["--cpus", "--mem", "--disk"].includes(rest[i]) || rest[i + 1] == null) { await hostPass(s, ["resize", n, ...rest]); return; } // the host says what's wrong
-				size[rest[i].slice(2)] = rest[i + 1] ?? "";
+				if (!["--cpus", "--mem", "--disk"].includes(rest[i]) || rest[i + 1] == null) usage("resize");
+				size[rest[i].slice(2)] = rest[i + 1]; // (the host checks the values)
 			}
 			await lc(() => lifecycle.resizeVm(n, size, passthrough()));
 		},
@@ -422,7 +423,7 @@ export const COMMANDS = {
 	revert: {
 		help: { group: "snapshots", summary: "restore a VM to a snapshot (keeps its name, address and token)", usage: ["revert NAME SNAP"] },
 		// A revert restores the snapshot's tmpfs too: grants are always reconciled to the current ones.
-		run: async (s, [n, snap]) => { needHost(s); if (!VALID_SNAP.test(snap ?? "")) die(`invalid snapshot name: ${snap ?? ""}`); await lc(() => lifecycle.revertVm(needVm(n), snap, passthrough())); },
+		run: async (s, [n, snap]) => { needHost(s); if (!snap) usage("revert"); if (!VALID_SNAP.test(snap)) die(`invalid snapshot name: ${snap ?? ""}`); await lc(() => lifecycle.revertVm(needVm(n), snap, passthrough())); },
 	},
 	"snap-rm": {
 		help: { group: "snapshots", summary: "delete a snapshot", usage: ["snap-rm NAME SNAP"] },
@@ -591,7 +592,7 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ host & diagnostics
 	version: {
-		help: { group: "admin", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
+		help: { group: "admin", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
 		run: async (s, args) => cmdVersion(s, args),
 	},
 	"upgrade-host": {
@@ -635,17 +636,19 @@ async function main(argv) {
 	if (/[\n\t\r]/.test(BOXERY_HOME)) die("paths cannot contain line breaks or tabs");
 	let explicit = "", pinned = "";
 	if (argv[0] === "--host") {
-		if (argv.length < 3) die("usage: boxery --host NAME COMMAND [ARGS...]");
+		if (argv.length < 3) die("usage: boxery --host NAME COMMAND [ARGS...]", USAGE);
 		explicit = argv[1];
 		if (!explicit) die("invalid host name");
 		argv = argv.slice(2);
 		// Internal (tests): --profile-dir uses that directory as the host's profile, without the registry.
 		if (argv[0] === "--profile-dir") {
-			if (argv.length < 3) die("usage: boxery --host NAME --profile-dir DIR COMMAND");
+			if (argv.length < 3) die("usage: boxery --host NAME --profile-dir DIR COMMAND", USAGE);
 			pinned = argv[1]; argv = argv.slice(2);
 		}
 	}
-	const [word = "help", ...args] = argv;
+	// (--version and -V too: what agents try first)
+	const [first = "help", ...args] = argv;
+	const word = ["--version", "-V"].includes(first) ? "version" : first;
 	// Help needs no host: boxery help [COMMAND], boxery -h, boxery COMMAND --help|-h.
 	if (["help", "-h", "--help"].includes(word)) return showHelp(args[0]);
 	const cmd = word.startsWith("__") ? word : resolve(COMMANDS, word);

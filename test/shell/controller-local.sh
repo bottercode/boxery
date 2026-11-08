@@ -60,6 +60,16 @@ done
 "$A" rm hc >/dev/null 2>&1 || true
 if "$A" shapes bogus >/dev/null 2>&1; then bad "shapes bogus accepted"; else ok "shapes rejects extra args"; fi
 "$A" rm w2 >/dev/null 2>&1; "$A" rm w3 >/dev/null 2>&1
+# Usage errors exit 2 (docs/cli.md), not 1 like other failures
+for a in "run" "run w1" "resize w1" "resize w1 --cpus" "resize w1 --bogus 2" "forward w1" "forward w1 8123 abc" "prompt w1" "agent-forward w1 maybe" "new w9 --bogus" "new w9 --shape" "fork w1" "shapes bogus" "leases extra" "acquire --bogus 1" "acquire --ttl" \
+	"start" "revert w1" "new x9 --from" "setup local --name" "host use" "runners once --bogus"; do
+	# shellcheck disable=SC2086
+	rc=0; "$A" $a >/dev/null 2>&1 </dev/null || rc=$?
+	[[ $rc == 2 ]] && ok "usage error exits 2: $a" || bad "usage error $a: exit $rc"
+done
+rc=0; "$A" start 'Bad;Name' >/dev/null 2>&1 || rc=$?
+[[ $rc == 1 ]] && ok "an invalid (not missing) VM name is a failure, exit 1" || bad "start Bad;Name: exit $rc"
+[[ $("$A" --host local --version 2>/dev/null | head -1) == "controller  "* ]] && ok "--host NAME --version" || bad "--host local --version: $("$A" --host local --version 2>&1)"
 
 printf 'SECRET_FILE=1\n' >"$tmp/dev.env"
 export MY_TOKEN='va lue $with "quotes"'

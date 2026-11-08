@@ -4,7 +4,7 @@
 import { describeHosts, profileFromDirectory, registeredHosts, resolveHost } from "../core/boxery-core.mjs";
 import { profileConfig } from "../core/profile.mjs";
 import { RegistryError, VALID_ALIAS, addHostLocked, checkedDefault, destination, isRegistered, needAlias, recordBackend, removeHostLocked, setDefault, setup, withRegistryLock } from "../core/registry.mjs";
-import { CliError, die, note, say, usage } from "./lib.mjs";
+import { CliError, USAGE, die, note, say, usage } from "./lib.mjs";
 /** @import { HostProfile } from "../core/boxery-core.mjs" */
 /** @import { RegistryIO } from "../core/registry.mjs" */
 
@@ -26,8 +26,8 @@ function setupFlags(flags) {
 	const o = {};
 	for (let i = 0; i < flags.length; i += 2) {
 		const f = flags[i];
-		if (!["--key", "--host-bin", "--profile", "--backend"].includes(f)) die(`unknown flag ${f}`);
-		if (i + 1 >= flags.length) die(`${f} needs a value`);
+		if (!["--key", "--host-bin", "--profile", "--backend"].includes(f)) die(`unknown flag ${f}`, USAGE);
+		if (i + 1 >= flags.length) die(`${f} needs a value`, USAGE);
 		const v = flags[i + 1];
 		if (f === "--key") o.key = v; else if (f === "--host-bin") o.hostBin = v; else if (f === "--profile") o.hostProfile = v; else o.backend = v;
 	}
@@ -59,8 +59,8 @@ export async function setupNamed(args) {
 	const rest = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
-		if (a === "--name") { if (i + 1 >= args.length) die("--name needs a value"); name = args[++i]; }
-		else if (["--key", "--host-bin", "--profile", "--backend"].includes(a)) { if (i + 1 >= args.length) die(`${a} needs a value`); rest.push(a, args[++i]); }
+		if (a === "--name") { if (i + 1 >= args.length) die("--name needs a value", USAGE); name = args[++i]; }
+		else if (["--key", "--host-bin", "--profile", "--backend"].includes(a)) { if (i + 1 >= args.length) die(`${a} needs a value`, USAGE); rest.push(a, args[++i]); }
 		else rest.push(a);
 	}
 	if (!rest.length) usage("setup");
@@ -91,7 +91,7 @@ export async function hostCommand(args) {
 		return cli(() => say(resolveHost(needAlias(rest[0])).dir));
 	}
 	if (!["add", "use", "rm"].includes(action)) usage("host");
-	if (!rest.length) die(`host ${action} needs a name`);
+	if (!rest.length) die(`host ${action} needs a name`, USAGE);
 	const [alias, ...more] = rest;
 	await cli(async () => {
 		needAlias(alias);
