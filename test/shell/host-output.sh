@@ -153,6 +153,8 @@ err "connect to a non-ssh port" "boxery-host: connect: only the ssh port is supp
 err "resize without sizes" "boxery-host: usage: resize NAME [--cpus N] [--mem MiB] [--disk GiB]" resize a1
 err "revert without a snapshot" "boxery-host: usage: revert NAME SNAP" revert a1
 err "rm of a missing VM" "boxery-host: no such vm: nope" rm nope
+err "start of a missing VM" "boxery-host: no such vm: nope" start nope
+err "stop of a missing VM" "boxery-host: no such vm: nope" stop nope
 err "pool rm of a pet" "boxery-host: b2 is not a pool VM" pool rm b2
 err "edge-set with no input" "boxery-host: edge-set: invalid routes (hosts must be DNS names; header names [A-Za-z0-9-]; no CR/LF; llm: chatgpt|openai|anthropic|ollama)" edge-set a1 </dev/null
 err "images with a bad flag" "boxery-host: usage: images [--json]" images bogus

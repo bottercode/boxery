@@ -239,6 +239,8 @@ export async function rm(rt, [name]) {
 /** @param {Runtime} rt @param {string[]} args */
 export async function start(rt, [name]) {
 	validName(name);
+	// Checked here, not left to the backend: `limactl start` of an unknown instance creates one (#209).
+	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
 	await rt.vms.call("backend_start", [name]);
 	const ep = await rt.vms.waitEndpoint(name);
 	await rt.waitSsh(name, ep);
@@ -253,6 +255,7 @@ export async function start(rt, [name]) {
 /** @param {Runtime} rt @param {string[]} args */
 export async function stop(rt, [name]) {
 	validName(name);
+	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
 	await rt.vms.call("backend_stop", [name]);
 	log(`${name} shutting down`);
 }
