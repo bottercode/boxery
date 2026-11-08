@@ -13,6 +13,7 @@ import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } fr
 import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
+/** @import { ShapeInput } from "./shapes.mjs" */
 /** @import { VmKind } from "./vm-records.mjs" */
 
 /** Parsed `new` arguments; sizes are the flags' strings ("" = unset). layers: optional layers on top of
@@ -72,6 +73,19 @@ export function parseNewArgs(args) {
 	return o;
 }
 
+/** The size the backend gave new VM NAME, which may not be the one asked for (#211): exe.dev caps it to the
+ *  account's largest VM, boat rounds up to one of its types, a disk grows to its source's. A VM whose CPUs
+ *  or memory differ from its shape's is a custom size; a bigger disk keeps the shape's name. The size
+ *  asked for if the backend can't say. @param {Runtime} rt @param {string} name @param {ShapeInput} want
+ *  @returns {Promise<ShapeInput>} */
+async function sizeGot(rt, name, want) {
+	if (!await rt.vms.has("backend_size")) return want;
+	const got = await rt.vms.size(name, { quiet: true }).catch(() => null);
+	if (!got) return want;
+	const [cpus, mem, disk] = got;
+	return { shape: cpus === Number(want.cpus) && mem === Number(want.mem) ? want.shape : null, cpus, mem, disk };
+}
+
 /** Create, boot and wait for NAME. Returns "NAME HOST:PORT". @param {Runtime} rt @param {NewArgs} args */
 export async function createVm(rt, { name, shape, cpus, mem, disk, from, headless, layers = [], sameAs }) {
 	validName(name);
@@ -80,7 +94,8 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 		if (disk) fail("OpenShell disk sizing is managed by its compute driver; omit --disk");
 		if (layers.length) fail("OpenShell uses prebuilt images; --layers is not supported");
 	}
-	// Size: the shape (the default shape if none), then explicit flags. Any flag makes it a custom size.
+	// Size: the shape (the default shape if none), then explicit flags. Any flag makes it a custom size, as does a backend that
+	// gives the VM other CPUs or memory (sizeGot).
 	const shapes = rt.shapes();
 	const base = shapeSize(shapes, shape || shapes.default);
 	const custom = Boolean(cpus || mem || disk);
@@ -115,7 +130,7 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 	// Restricted workloads have no root provisioning, guest SSH keys or Boxery proxy token.
 	const userdata = rt.backend === "openshell" ? "" : await step("seed", () => writeSeed(rt, name, provision));
 	await step("backend-new", () => rt.vms.call("backend_new", [name, cpus, mem, disk, userdata, src]));
-	createVmRecord(rt.db(), name, { kind, os, size: rt.backend === "openshell" ? null : { shape: label, cpus, mem, disk } });
+	createVmRecord(rt.db(), name, { kind, os, size: rt.backend === "openshell" ? null : await step("size", () => sizeGot(rt, name, { shape: label, cpus, mem, disk })) });
 	const ep = await step("endpoint", () => rt.vms.waitEndpoint(name));
 	log(rt.backend === "openshell" ? `${name}: waiting for restricted gateway SSH` : `${name} reachable at ${ep.host}:${ep.port}; waiting for ssh + cloud-init${provision ? ` (installing ${provision})` : ""}`);
 	await step("ssh", () => rt.waitSsh(name, ep));

@@ -110,7 +110,7 @@ it("opt-in create timings are stderr-only, include failed stages and contain no 
 	assert.equal(result.code, 0, result.stderr);
 	assert.match(result.stdout, /^timed 127\.0\.0\.1:\d+\n$/);
 	const events = result.stderr.split("\n").filter((l) => l.startsWith("[boxery-timing] ")).map((l) => JSON.parse(l.slice(16)));
-	assert.deepEqual(events.map((e) => e.stage), ["seed", "backend-new", "endpoint", "ssh", "cloud-init", "desktop"]);
+	assert.deepEqual(events.map((e) => e.stage), ["seed", "backend-new", "size", "endpoint", "ssh", "cloud-init", "desktop"]);
 	for (const e of events) {
 		assert.deepEqual(Object.keys(e), ["vm", "stage", "ms", "ok"]);
 		assert.equal(e.vm, "timed"); assert.equal(e.ok, true); assert.ok(e.ms >= 0);

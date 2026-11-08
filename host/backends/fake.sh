@@ -39,7 +39,9 @@ backend_new() { # NAME CPUS MEM DISK USERDATA [SOURCE: VM@LABEL image | stock]
 		rm -f "$FAKE/$1/home/.ssh/authorized_keys"
 		echo "$6" >"$FAKE/$1/from"
 	fi
-	echo running >"$FAKE/$1/state"; cp "$5" "$FAKE/$1/user-data"; echo "$2 $3 $4" >"$FAKE/$1/size"
+	# BOXERY_FAKE_MAX_CPUS: like exe.dev's account limit, the VM gets fewer CPUs than asked.
+	local c=$2; if [[ -n ${BOXERY_FAKE_MAX_CPUS:-} ]] && ((c > BOXERY_FAKE_MAX_CPUS)); then c=$BOXERY_FAKE_MAX_CPUS; fi
+	echo running >"$FAKE/$1/state"; cp "$5" "$FAKE/$1/user-data"; echo "$c $3 $4" >"$FAKE/$1/size"
 	fake_checkpoint new "$1"
 }
 # Like the real backends: an ssh endpoint only while running; DISK_BYTES is the size the VM was given,

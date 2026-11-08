@@ -2,7 +2,7 @@
 // written when the VM is made and deleted with it, each in one statement.
 // - kind: "desktop" or "headless". Fixed for the VM's life. The guest has /etc/boxery/headless too.
 // - os: the guest OS (guests/index.mjs). Fixed for the VM's life; checked on write.
-// - size: {shape, cpus, mem, disk}, so forks and `ls` know it. shape null = custom (size flags, resize).
+// - size: {shape, cpus, mem, disk}, so forks and `ls` know it. shape null = custom (size flags, resize, or a backend that gave other CPUs or memory).
 // A VM made from an image or a fork gets its source VM's kind and OS (an image VM@LABEL is a disk of VM).
 // No row (made outside boxery, or before any record): desktop, linux, no size (ls reads that from the
 // backend once and records it). Writers hold the VM's lifecycle lock, except ls's addVmSize.

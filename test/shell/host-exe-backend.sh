@@ -154,6 +154,7 @@ grep -F 'systemctl enable boxery-exe-boot.service' "$tmp/post.sh" >/dev/null && 
 out=$("$H" new v1 --cpus 4 --mem 8192 --disk 10 2>"$tmp/err") && [[ $out == "v1 127.0.0.1:22401" ]] && ok "new prints NAME 127.0.0.1:PORT" || bad "new: $out $(cat "$tmp/err")"
 called "exe.dev cp bxtest-base $(V v1) --copy-tags=false --cpu=2 --memory=4GB" && ! called "--disk=" && ok "copied from the base, capped to the plan, disk never shrunk" || bad "cp: $(grep 'exe.dev cp' "$CALLS")"
 grep -F "capping to 2 vCPU" "$tmp/err" >/dev/null && ok "capping is logged" || bad "no capping log"
+lsj | jq -e 'map(select(.name == "v1"))[0] | .shape == "custom" and .cpus == 2 and .mem == 4096' >/dev/null && ok "ls --json: the capped size, not the one asked for (#211)" || bad "ls capped: $(lsj | jq -c 'map(select(.name == "v1"))[0]')"
 I=$S/$(V v1)/script.1
 bash -n "$I" && ok "identity script parses" || bad "identity syntax"
 [[ ! -e $E/v1/identity.sh ]] && ok "identity script (it carries the proxy token) is never left on disk" || bad "identity.sh left behind"
