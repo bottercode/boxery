@@ -422,7 +422,12 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ work in a VM
 	ssh: {
-		help: { group: "use", summary: "shell into a VM (also: ssh NAME.boxery)", usage: ["ssh NAME [CMD...]"], details: ["With CMD, plain ssh semantics: the words are joined and run by the VM's shell."], seeAlso: ["run"] },
+		help: {
+			group: "use", summary: "shell into a VM (also: ssh NAME.boxery)", usage: ["ssh NAME[@HOST] [CMD...]"],
+			details: ["NAME@HOST selects a registered host without changing the default. If --host is also given, it must match HOST.", "With CMD, plain ssh semantics: the words are joined and run by the VM's shell."],
+			examples: [["A VM on another registered host", "boxery ssh demo@lab"], ["Run a command there", "boxery ssh demo@lab hostname"]],
+			seeAlso: ["run"],
+		},
 		run: async (s, args) => { needHost(s); await cmdSsh(s, args); },
 	},
 	run: {
@@ -636,6 +641,15 @@ async function main(argv) {
 	if (cmd === "__skew") { const n = skewNote({ version: args[0], describe: args[1] || null }, { version: args[2], describe: args[3] || null }, args[4] ?? ""); if (n) say(n); return; }
 	// Before setup there is no host to select; version still reports the controller.
 	if (cmd === "version" && !explicit && defaultHost() == null) return cmdVersion(null, args);
+	// SSH's VM@HOST is CLI shorthand, not an SSH user or a new destination. Resolve the registered profile
+	// before reading any config or reapplying grants; a conflicting selector must never reach either host.
+	if (cmd === "ssh" && args[0]?.includes("@")) {
+		const [vm, host, ...extra] = args[0].split("@");
+		if (!VALID_VM.test(vm) || !VALID_VM.test(host ?? "") || extra.length) die(`invalid SSH target: ${args[0]} (use NAME@HOST; names: lowercase letters, digits and hyphens, starting with a letter, at most 31 characters)`);
+		if (explicit && explicit !== host) die(`SSH target host ${host} conflicts with --host ${explicit}; use one host or matching selectors`);
+		explicit = host;
+		args[0] = vm;
+	}
 	const name = explicit || defaultHost();
 	if (!name) die("no host configured; run: boxery setup user@host|local (or boxery host use NAME)");
 	if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) die(`invalid host name: ${name}`);
