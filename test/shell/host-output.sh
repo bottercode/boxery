@@ -46,7 +46,23 @@ same "new logs progress on stderr" err 0
 run new b2
 echo "b2 127.0.0.1:22001" >"$tmp/expected"; same "new with the default shape" out 0
 run stop b2
-echo "==> b2 shutting down" >"$tmp/expected"; same "stop logs on stderr" err 0
+echo "==> b2 stopped" >"$tmp/expected"; same "stop logs on stderr" err 0
+# Agents retry: nothing to do is success on every backend (#214).
+run stop b2
+echo "==> b2 is already stopped" >"$tmp/expected"; same "stop of a stopped VM succeeds" err 0
+run start a1
+echo "==> a1 is already running" >"$tmp/expected"; same "start of a running VM succeeds" err 0
+# A backend that only asks the guest to shut down (libvirt): stop waits until it is off, so a stop && start
+# doesn't find it still running.
+BOXERY_FAKE_STOP_LAG=1 run stop a1
+printf '==> a1 shutting down\n==> a1 stopped\n' >"$tmp/expected"; same "stop waits for a slow shutdown" err 0
+BOXERY_FAKE_STOP_LAG=never BOXERY_STOP_WAIT=1 run stop a1
+[[ $(cat "$tmp/err") == "==> a1 is already stopped" ]] && ok "…and then it is stopped" || bad "second stop: $(cat "$tmp/err")"
+run start a1
+BOXERY_FAKE_STOP_LAG=never BOXERY_STOP_WAIT=1 run stop a1
+[[ $rc == 1 && $(tail -1 "$tmp/err") == "boxery-host: a1 is still in shutdown 1s after it was asked to shut down; run stop again, or look at the guest's console" ]] &&
+	ok "a guest that never shuts down: stop fails, saying so" || bad "stuck stop: exit $rc, $(cat "$tmp/err")"
+echo running >"$BOXERY_FAKE_DIR/a1/state"
 
 echo "== usage"
 # The help itself is rendered from host/help.mjs (test/help-drift.test.mjs pins it); here: how it's reached.

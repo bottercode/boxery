@@ -77,8 +77,10 @@ called "qemu-img info -U --output=json $V/v1/disk.qcow2" && ok "ls reads the siz
 [[ $("$H" ip v1) == 10.77.1.2 ]] && ok "ip" || bad ip
 
 # --- stop / start
-"$H" stop v1 >/dev/null 2>&1 && called "ch-remote --api-socket $V/v1/api.sock power-button" && ok "stop presses the power button" || bad stop
-systemctl --user stop boxery-ch-v1.service   # the guest powered off
+# The power button only asks the guest; boxery-host stop waits until it is off (#214).
+"$H" stop v1 >"$tmp/stop.out" 2>&1 & sp=$!
+sleep 1; systemctl --user stop boxery-ch-v1.service   # the guest powered off
+wait "$sp" && called "ch-remote --api-socket $V/v1/api.sock power-button" && grep -qx '==> v1 stopped' "$tmp/stop.out" && ok "stop presses the power button and waits until the guest is off" || bad "stop: $(cat "$tmp/stop.out")"
 "$H" ls --json | jq -e 'map(select(.name == "v1"))[0] | .state == "shut off" and .ssh_addr == null' >/dev/null && ok "stopped VM: shut off, no addr" || bad "ls stopped"
 expect_fail "ip of stopped VM fails" "$H" ip v1
 
