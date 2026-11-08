@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:os";
 import { acquireLease, leaseRows, localLeases, releaseLease, renewLease } from "../core/leases.mjs";
-import { USAGE, die, hostFailed, note, quit, say, usage } from "./lib.mjs";
+import { BOXERY, USAGE, die, hostFailed, note, quit, say, usage } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 /** Like `date`: the local format people read elsewhere in the CLI. @param {number} t unix seconds */
@@ -46,7 +46,7 @@ export async function leaseCommand(_s, command, args) {
 			try { r = await acquireLease({ ttl: o.ttl ?? 1800, wait: o.wait ?? 0, ...(o.holder !== undefined ? { holder: o.holder } : {}) }, cli); }
 			catch (e) { if (interrupted && /** @type {Error} */ (e).name === "AbortError") quit(interrupted); hostFailed(e); }
 			finally { for (const [sig, h] of handlers) process.off(sig, h); }
-			note(`==> leased ${r.name} (lease ${r.id}, expires in ${r.expires - Math.floor(Date.now() / 1000)}s; renew with: boxery renew ${r.name})`);
+			note(`==> leased ${r.name} (lease ${r.id}, expires in ${r.expires - Math.floor(Date.now() / 1000)}s; renew with: ${BOXERY} renew ${r.name})`);
 			return say(`${r.name} ${r.id}`);
 		}
 		case "renew": {

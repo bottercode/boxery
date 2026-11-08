@@ -8,7 +8,7 @@ import { captureVm, cleanupVmImages } from "./images.mjs";
 import { deleteHostKey } from "./hostkeys.mjs";
 import { issueToken, writeSeed } from "./seed.mjs";
 import { shapeSize } from "./shapes.mjs";
-import { fail, log, print, sleep, stamp, validImage, validName, validNum } from "./util.mjs";
+import { fail, hint, log, print, sleep, stamp, validImage, validName, validNum } from "./util.mjs";
 import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } from "./vm-records.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
@@ -108,13 +108,13 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 	let kind = "desktop";
 	let os = DEFAULT_OS, src = "", provision = "";
 	if (from) {
-		if (!await rt.vms.imageExists(from)) fail(`no such image: ${from} (boxery-host images)`);
+		if (!await rt.vms.imageExists(from)) fail(`no such image: ${from} (${hint("images")})`);
 		({ kind, os } = inheritedType(rt.db(), from)); src = from;
 		if (headless && kind !== "headless") fail(`${from} has a desktop, and a VM made from an image keeps it (drop --headless)`);
 	} else if (headless) {
 		kind = "headless"; src = "stock"; provision = ["plumbing", "devtools", ...layers].join(" ");
 	} else if (!await rt.vms.hasBase()) {
-		fail(`no base image; run: boxery-host build-base (or: new ${name} --headless, which needs none)`);
+		fail(`no base image; run: ${hint("build-base")} (or: new ${name} --headless, which needs none)`);
 	}
 	const t0 = Date.now(), secs = () => Math.floor((Date.now() - t0) / 1000);
 	// Opt-in diagnostics stay on stderr and never include seed contents, tokens or SSH commands.
@@ -237,7 +237,7 @@ export async function fork(rt, args) {
 /** @param {Runtime} rt @param {string[]} args */
 export async function rm(rt, [name]) {
 	validName(name);
-	if (rt.poolRow(name)) fail(`${name} is a pool VM; run: boxery-host pool rm ${name} (after its lease ends)`);
+	if (rt.poolRow(name)) fail(`${name} is a pool VM; run: ${hint(`pool rm ${name}`)} (after its lease ends)`);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
 	const action = rt.intent("remove", name);
 	await rt.vms.call("backend_rm", [name]);

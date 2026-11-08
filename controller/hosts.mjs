@@ -4,7 +4,7 @@
 import { describeHosts, profileFromDirectory, registeredHosts, resolveHost } from "../core/boxery-core.mjs";
 import { profileConfig } from "../core/profile.mjs";
 import { RegistryError, VALID_ALIAS, addHostLocked, checkedDefault, destination, isRegistered, needAlias, recordBackend, removeHostLocked, setDefault, setup, withRegistryLock } from "../core/registry.mjs";
-import { CliError, USAGE, die, note, say, usage } from "./lib.mjs";
+import { BOXERY, CliError, USAGE, die, note, say, usage } from "./lib.mjs";
 /** @import { HostProfile } from "../core/boxery-core.mjs" */
 /** @import { RegistryIO } from "../core/registry.mjs" */
 
@@ -78,7 +78,7 @@ export async function setupNamed(args) {
 export async function backendCommand(host, args) {
 	if (args.length) usage("backend");
 	const b = await recordBackend(host);
-	if (!b) die("could not read the host's backend (does it predate 'boxery-host backend'? see: boxery version)");
+	if (!b) die(`could not read the host's backend (does it predate 'boxery-host backend'? see: ${BOXERY} version)`);
 	say(b);
 }
 

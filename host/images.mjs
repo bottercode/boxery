@@ -6,7 +6,7 @@
 import { BackendError } from "./backend.mjs";
 import { copyBuildRecord, deleteBuildRecord, refreshBuild } from "./build-info.mjs";
 import { installToken } from "./seed.mjs";
-import { fail, log, POOL_SNAP, stamp, validName, validSnap } from "./util.mjs";
+import { fail, hint, log, POOL_SNAP, stamp, validName, validSnap } from "./util.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { Backend, CallOptions } from "./backend.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
@@ -49,7 +49,7 @@ export async function snap(rt, [name, label]) {
 	validName(name);
 	const s = validSnap(label || `snap-${stamp("-")}`);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
-	if (await rt.vms.imageExists(`${name}@${s}`)) fail(`snapshot ${name}@${s} exists (boxery-host snap-rm ${name} ${s})`);
+	if (await rt.vms.imageExists(`${name}@${s}`)) fail(`snapshot ${name}@${s} exists (${hint(`snap-rm ${name} ${s}`)})`);
 	await captureVm(rt, name, `${name}@${s}`);
 	log(`snapshot ${name}@${s}`);
 }
