@@ -890,7 +890,7 @@ export function copyRoot(dir, { deny = [] } = {}) {
  * unless it is inside the root and neither inside nor containing a denied path.
  * @param {LocalConfinement} confinement
  */
-function confineLocal({ root, deny = [] }) {
+export function confineLocal({ root, deny = [] }) {
 	const denied = copyDenied(deny);
 	const check = (/** @type {string} */ real, shown = real) => {
 		if (!isWithin(real, root)) throw new Error(`local:${shown} is outside the copy root ${root}`);

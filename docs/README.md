@@ -21,6 +21,7 @@
 - **[Shared pool & leases](pool.md)**: several agents share a pool of VMs safely.
 - **[GitHub Actions runners](github-runners.md)**: ephemeral self-hosted runners, one job per freshly reset pool VM.
 - **[File transfers](copy.md)**: streaming `vm_copy`, destination semantics and cancellation.
+- **[Checkout sync](sync.md)**: `vm_sync` pushes a local git checkout into a VM so its tree matches exactly.
 
 ## Reference
 

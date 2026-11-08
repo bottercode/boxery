@@ -21,6 +21,7 @@ Work in a VM:
   ssh NAME[@HOST] [CMD...]              Shell into a VM (also: ssh NAME.boxery)
   run NAME CMD [ARG...]                 Run a command in ~/project, args as given (like docker exec)
   cp FROM TO                            Copy files and directories to, from and between VMs
+  sync NAME                             Push a local git checkout into a VM, so its tree matches exactly
   desktop NAME                          Open a VM's desktop in your browser (noVNC over ssh)
   forward NAME PORT [LOCAL]             Forward a VM port to localhost
   attach NAME [AGENT]                   Attach to an agent in a persistent tmux session (= agent attach)

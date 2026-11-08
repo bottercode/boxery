@@ -4,7 +4,7 @@
  * Built-in tools (bash, read, write, edit, …) are NOT touched: they keep acting on this machine, so
  * other extensions that wrap them keep working. VM work goes through clearly named vm_* tools:
  *
- *   vm_bash  vm_read  vm_write  vm_edit  vm_copy           files and shell in a VM
+ *   vm_bash  vm_read  vm_write  vm_edit  vm_copy  vm_sync  files and shell in a VM
  *   vm_jobs                                                 background command jobs (start / list / logs / wait / kill)
  *   vm_screenshot  vm_click  vm_type  vm_key  vm_scroll    computer use on the VM desktop
  *   vm_browser                                              Playwright → Chrome on the VM desktop

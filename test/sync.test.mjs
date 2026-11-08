@@ -1,0 +1,298 @@
+// vm_sync with real git and tar against temporary fake SSH endpoints (test/fixtures/copy-ssh.mjs): each
+// "VM" is a directory, and its ssh runs scripts there with /home/agent mapped to it. No real VMs.
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, test as nodeTest } from "node:test";
+import { q } from "../core/shell.mjs";
+import { deniedSyncPath } from "../core/sync.mjs";
+const test = (/** @type {string} */ name, /** @type {() => Promise<void> | void} */ fn) => nodeTest(name, { timeout: 60_000 }, fn);
+
+const FIXTURES = path.resolve(import.meta.dirname, "fixtures");
+/** @type {string} */ let dir;
+/** @type {NodeJS.ProcessEnv} */ let env;
+/** @type {string} */ let repo;
+const vmProject = () => path.join(dir, "vms", "alpha", "vm", "project");
+const GIT_ENV = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1" };
+const git = (/** @type {string} */ cwd, /** @type {string[]} */ ...args) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+const write = (/** @type {string} */ root, /** @type {string} */ rel, /** @type {string | Buffer} */ data) => {
+	mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+	writeFileSync(path.join(root, rel), data);
+};
+const read = (/** @type {string} */ root, /** @type {string} */ rel) => readFileSync(path.join(root, rel), "utf8");
+
+/** Run vm_sync in a worker; abortWhen(dir) → abort once it returns true. @param {object} [params] @param {{ abortWhen?: () => boolean, vm?: string }} [opts] */
+function sync(params = {}, { abortWhen, vm = "vm" } = {}) {
+	const child = spawn(process.execPath, [path.join(FIXTURES, "sync-worker.mjs"), vm, JSON.stringify({ from: repo, ...params })], {
+		env, cwd: dir, stdio: ["ignore", "pipe", "pipe", "ipc"],
+	});
+	let out = "", err = "";
+	child.stdout?.on("data", (d) => { out += d; });
+	child.stderr?.on("data", (d) => { err += d; });
+	let timer;
+	if (abortWhen) timer = setInterval(() => { if (abortWhen() && child.connected) { child.send("abort"); clearInterval(timer); } }, 5);
+	return new Promise((resolve, reject) => {
+		child.on("close", () => {
+			clearInterval(timer);
+			try { resolve(JSON.parse(out)); } catch { reject(new Error(`sync worker produced no result: ${err} ${out}`)); }
+		});
+	});
+}
+async function ok(params, opts) {
+	const r = /** @type {any} */ (await sync(params, opts));
+	assert.equal(r.ok, true, r.error);
+	return r;
+}
+/** Every tracked and untracked (not ignored) file with its content, relative to root. @param {string} root */
+function tree(root) {
+	const files = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split("\0").filter(Boolean)
+		.filter((f) => existsSync(path.join(root, f)));
+	return Object.fromEntries([...new Set(files)].sort().map((f) => [f, readFileSync(path.join(root, f)).toString("base64")]));
+}
+
+beforeEach(() => {
+	dir = mkdtempSync(path.join(tmpdir(), "boxery-sync-"));
+	mkdirSync(path.join(dir, "bin"));
+	const home = path.join(dir, "home");
+	mkdirSync(path.join(home, "host-registry"), { recursive: true });
+	const profile = path.join(home, "profiles", "alpha");
+	mkdirSync(profile, { recursive: true });
+	writeFileSync(path.join(profile, "config"), "# fake\n");
+	writeFileSync(path.join(profile, "ssh_config"), "# fake\n");
+	writeFileSync(path.join(home, "host-registry", "alpha"), `${profile}\n`);
+	writeFileSync(path.join(home, "default-host"), "alpha\n");
+	for (const vm of ["vm", "other"]) mkdirSync(path.join(dir, "vms", "alpha", vm, "tmp"), { recursive: true });
+	writeFileSync(path.join(dir, "calls"), "");
+	writeFileSync(path.join(dir, "bin", "ssh"), `#!/usr/bin/env bash\nexec ${q(process.execPath)} ${q(path.join(FIXTURES, "copy-ssh.mjs"))} "$@"\n`, { mode: 0o755 });
+	writeFileSync(path.join(dir, "bin", "tar"), `#!/usr/bin/env bash\nexec ${q(process.execPath)} ${q(path.join(FIXTURES, "copy-tar.mjs"))} "$@"\n`, { mode: 0o755 });
+	writeFileSync(path.join(dir, "bin", "setsid"), "#!/usr/bin/env bash\n[ \"$1\" != -w ] || shift\nexec perl -e 'setpgrp(0,0); exec @ARGV or die' -- \"$@\"\n", { mode: 0o755 });
+	env = {
+		...process.env, ...GIT_ENV, HOME: home, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, BOXERY_HOME: home,
+		COPY_ROOT: dir, COPY_LOG: path.join(dir, "calls"), REAL_TAR: execFileSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).trim(),
+	};
+	repo = path.join(dir, "local", "repo");
+	mkdirSync(repo, { recursive: true });
+	git(repo, "init", "-q", "-b", "main");
+	write(repo, ".gitignore", "node_modules/\ndist/\n");
+	write(repo, "README.md", "hello\n");
+	write(repo, "src/app.js", "console.log(1);\n");
+	write(repo, "src/old name.txt", "rename me\n");
+	write(repo, "gone.txt", "delete me\n");
+	git(repo, "add", "-A");
+	git(repo, "commit", "-qm", "first");
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+test("first sync into an empty directory: a detached checkout that matches", async () => {
+	const r = await ok();
+	const head = git(repo, "rev-parse", "HEAD");
+	assert.match(r.text, new RegExp(`^synced ${head.slice(0, 7)} \\+ 0 modified, 0 untracked, 0 deleted → vm:/home/agent/project · tree matches$`));
+	assert.equal(r.structured.sha, head);
+	assert.equal(r.structured.tree.match, true);
+	assert.equal(r.structured.tree.local, r.structured.tree.vm);
+	assert.ok(r.structured.transferred_bytes > 0);
+	assert.equal(typeof r.structured.elapsed_ms, "number");
+	assert.equal(git(vmProject(), "rev-parse", "HEAD"), head);
+	assert.throws(() => git(vmProject(), "symbolic-ref", "-q", "HEAD"), "detached");
+	assert.deepEqual(tree(vmProject()), tree(repo));
+	assert.equal(git(vmProject(), "status", "--porcelain"), "", "a clean checkout in the VM");
+	assert.equal(git(vmProject(), "remote"), "", "no remote configured");
+});
+
+test("new commits, dirty, untracked, deleted and renamed files, a binary and spaces in names", async () => {
+	await ok();
+	write(repo, "src/app.js", "console.log(2);\n");
+	git(repo, "commit", "-qam", "second");
+	write(repo, "README.md", "hello, changed\n"); // unstaged
+	write(repo, "staged.txt", "staged\n");
+	git(repo, "add", "staged.txt"); // staged, new
+	write(repo, "notes with spaces.md", "untracked\n");
+	write(repo, "bin/blob.bin", Buffer.from([0, 255, 1, 254, 0, 10, 13, 0]));
+	unlinkSync(path.join(repo, "gone.txt"));
+	renameSync(path.join(repo, "src/old name.txt"), path.join(repo, "src/new name.txt"));
+	const r = await ok();
+	assert.equal(r.structured.sha, git(repo, "rev-parse", "HEAD"));
+	assert.equal(git(vmProject(), "rev-parse", "HEAD"), r.structured.sha);
+	assert.equal(r.structured.tree.match, true);
+	assert.deepEqual(r.structured.counts, { modified: 3, untracked: 2, deleted: 1 }, "README, staged.txt, the rename; two untracked; gone.txt");
+	assert.deepEqual(tree(vmProject()), tree(repo));
+	assert.deepEqual(readFileSync(path.join(vmProject(), "bin/blob.bin")), Buffer.from([0, 255, 1, 254, 0, 10, 13, 0]));
+	assert.ok(!existsSync(path.join(vmProject(), "gone.txt")));
+	assert.ok(!existsSync(path.join(vmProject(), "src/old name.txt")));
+	// The VM shows the same working changes against HEAD as the local checkout.
+	assert.match(git(vmProject(), "status", "--porcelain"), /notes with spaces/);
+	assert.equal(git(repo, "status", "--porcelain").length > 0, true, "the local checkout is untouched");
+	assert.equal(git(repo, "for-each-ref").includes("boxery"), false, "no refs written locally");
+
+	// Reverting local changes removes the earlier sync's leftovers.
+	git(repo, "checkout", "-q", "--", ".");
+	git(repo, "reset", "-q", "--hard");
+	git(repo, "clean", "-qfd");
+	const r2 = await ok();
+	assert.deepEqual(r2.structured.counts, { modified: 0, untracked: 0, deleted: 0 });
+	assert.deepEqual(tree(vmProject()), tree(repo));
+	assert.ok(!existsSync(path.join(vmProject(), "notes with spaces.md")));
+});
+
+test("ignored files in the VM survive a sync", async () => {
+	await ok();
+	write(vmProject(), "node_modules/dep/index.js", "module.exports = 1;\n");
+	write(vmProject(), "dist/out.js", "built\n");
+	write(repo, "src/app.js", "console.log(3);\n");
+	const r = await ok();
+	assert.equal(r.structured.tree.match, true);
+	assert.equal(read(vmProject(), "node_modules/dep/index.js"), "module.exports = 1;\n");
+	assert.equal(read(vmProject(), "dist/out.js"), "built\n");
+	assert.equal(read(vmProject(), "src/app.js"), "console.log(3);\n");
+});
+
+test("a VM-side edit blocks the sync and changes nothing", async () => {
+	await ok();
+	write(vmProject(), "src/app.js", "edited in the VM\n");
+	write(vmProject(), "scratch.txt", "new in the VM\n");
+	write(repo, "README.md", "local change\n");
+	const before = tree(vmProject());
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /refused: vm:\/home\/agent\/project has changes since the last sync that vm_sync didn't make/);
+	assert.match(r.error, /M src\/app\.js/);
+	assert.match(r.error, /A scratch\.txt/);
+	assert.deepEqual(tree(vmProject()), before);
+	assert.equal(read(vmProject(), "README.md"), "hello\n");
+});
+
+test("a dirty VM checkout that was never synced blocks the sync", async () => {
+	mkdirSync(vmProject(), { recursive: true });
+	git(vmProject(), "init", "-q");
+	write(vmProject(), "mine.txt", "x\n");
+	git(vmProject(), "add", "-A");
+	git(vmProject(), "commit", "-qm", "vm");
+	write(vmProject(), "mine.txt", "dirty\n");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /changes against its HEAD/);
+	assert.equal(read(vmProject(), "mine.txt"), "dirty\n");
+});
+
+test("a non-empty directory that isn't a repository is refused", async () => {
+	write(vmProject(), "stray.txt", "x\n");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /is not a git repository and is not empty \(stray\.txt/);
+	assert.ok(!existsSync(path.join(vmProject(), ".git")));
+});
+
+test("deny-listed files block the sync, naming the path and vm_grant", async () => {
+	await ok();
+	write(repo, "config/.env.local", "SECRET=1\n");
+	write(repo, "README.md", "changed\n");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /config\/\.env\.local/);
+	assert.match(r.error, /vm_grant/);
+	assert.equal(read(vmProject(), "README.md"), "hello\n", "nothing changed in the VM");
+	// Once ignored, the rest syncs.
+	write(repo, ".gitignore", "node_modules/\ndist/\n.env*\n");
+	assert.equal((await ok()).structured.tree.match, true);
+	assert.ok(!existsSync(path.join(vmProject(), "config/.env.local")));
+});
+
+test("the deny list", () => {
+	for (const p of [".env", ".env.local", "a/.env.production", ".envrc", ".npmrc", "x/.pypirc", ".netrc", ".git-credentials", "auth.json", ".docker/config.json", "home/.kube/config", "credentials", "id_ed25519"])
+		assert.ok(deniedSyncPath(p), p);
+	for (const p of [".env.example", ".env.sample", "environment.ts", "src/auth.js", "npmrc.md", "docs/credentials.md", "id_ed25519.pub"])
+		assert.ok(!deniedSyncPath(p), p);
+});
+
+test("a second sync with no local changes transfers nothing and still matches", async () => {
+	write(repo, "wip.txt", "uncommitted\n");
+	const first = await ok();
+	const calls = readFileSync(path.join(dir, "calls"), "utf8").split("\n").filter(Boolean).length;
+	const second = await ok();
+	assert.equal(second.structured.transferred_bytes, 0);
+	assert.equal(second.structured.tree.match, true);
+	assert.equal(second.structured.lockfile_changed, false);
+	assert.equal(second.structured.snapshot, first.structured.snapshot, "the same working changes give the same snapshot commit");
+	assert.match(second.text, /· tree matches$/);
+	const tars = readFileSync(path.join(dir, "calls"), "utf8").split("\n").filter(Boolean).slice(calls).map((l) => JSON.parse(l)).filter((c) => c.kind === "tar");
+	assert.deepEqual(tars, [], "no tar transfer the second time");
+});
+
+test("a lockfile change is flagged, once", async () => {
+	write(repo, "package-lock.json", "{\"v\":1}\n");
+	git(repo, "add", "-A");
+	git(repo, "commit", "-qm", "lock");
+	assert.equal((await ok()).structured.lockfile_changed, true, "new on the first sync");
+	assert.equal((await ok()).structured.lockfile_changed, false);
+	write(repo, "packages/web/pnpm-lock.yaml", "lockfileVersion: 9\n"); // untracked, nested
+	const r = await ok();
+	assert.equal(r.structured.lockfile_changed, true);
+	assert.match(r.text, /lockfile changed/);
+	write(repo, "README.md", "unrelated\n");
+	assert.equal((await ok()).structured.lockfile_changed, false);
+});
+
+test("cancellation mid-transfer leaves the VM unchanged", async () => {
+	await ok();
+	const before = tree(vmProject());
+	const head = git(vmProject(), "rev-parse", "HEAD");
+	write(repo, "big.bin", Buffer.alloc(8 * 1024 * 1024, 7));
+	write(repo, "README.md", "changed\n");
+	env.COPY_SLOW_SOURCE = "local";
+	const calls = () => readFileSync(path.join(dir, "calls"), "utf8");
+	const mark = calls().length;
+	const r = /** @type {any} */ (await sync({}, { abortWhen: () => calls().slice(mark).includes("\"role\":\"destination\"") }));
+	assert.equal(r.ok, false);
+	assert.equal(r.name, "AbortError");
+	assert.deepEqual(tree(vmProject()), before);
+	assert.equal(git(vmProject(), "rev-parse", "HEAD"), head);
+	const cache = path.join(dir, "vms", "alpha", "vm", ".cache", "boxery");
+	assert.deepEqual(existsSync(cache) ? execFileSync("ls", ["-A", cache], { encoding: "utf8" }).trim() : "", "", "no bundle or staging left");
+	delete env.COPY_SLOW_SOURCE;
+	assert.equal((await ok()).structured.tree.match, true, "a later sync completes");
+});
+
+test("an interrupted swap is undone by the next sync", async () => {
+	await ok();
+	write(repo, "README.md", "next\n");
+	// Simulate a crash mid-swap: the pending record is there, the working directory half updated.
+	const g = path.join(vmProject(), ".git");
+	const synced = git(vmProject(), "rev-parse", "refs/boxery/synced^{tree}");
+	write(vmProject(), "README.md", "half written\n");
+	const half = git(vmProject(), "rev-parse", `${git(vmProject(), "stash", "create")}^{tree}`);
+	writeFileSync(path.join(g, "boxery-sync-pending"), `${synced} ${half}\n`);
+	writeFileSync(path.join(g, "boxery-sync-index.bak"), readFileSync(path.join(g, "index")));
+	const r = await ok();
+	assert.equal(r.structured.tree.match, true);
+	assert.equal(read(vmProject(), "README.md"), "next\n");
+	assert.ok(!existsSync(path.join(g, "boxery-sync-pending")));
+});
+
+test("a local path that isn't a git checkout gives a clear error", async () => {
+	const plain = path.join(dir, "plain");
+	mkdirSync(plain);
+	const r = /** @type {any} */ (await sync({ from: plain }));
+	assert.equal(r.ok, false);
+	assert.match(r.error, /is not a git checkout .*use vm_copy for other files/);
+	assert.ok(!existsSync(vmProject()), "the VM was not touched");
+});
+
+test("a subdirectory syncs its whole repository; to picks the VM directory", async () => {
+	const r = await ok({ from: path.join(repo, "src"), to: "elsewhere/repo" });
+	assert.equal(r.structured.from, repo);
+	assert.equal(r.structured.to, "/home/agent/project/elsewhere/repo");
+	assert.deepEqual(tree(path.join(vmProject(), "elsewhere/repo")), tree(repo));
+});
+
+test("local: refused or confined like vm_copy", async () => {
+	const refused = /** @type {any} */ (await sync({ local: false }));
+	assert.equal(refused.ok, false);
+	assert.match(refused.error, /vm_sync is disabled on this server/);
+	const outside = /** @type {any} */ (await sync({ local: { root: path.join(dir, "vms") } }));
+	assert.equal(outside.ok, false);
+	assert.match(outside.error, /outside the copy root/);
+	const inside = await ok({ from: "repo", local: { root: path.join(dir, "local") } });
+	assert.equal(inside.structured.tree.match, true);
+});

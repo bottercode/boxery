@@ -7,7 +7,7 @@
 // Front-ends call runTool(), which resolves the call's host and VM against their Session and runs the
 // tool on that host. ctx: { signal, session, host, current, localCwd, localCopy?, progress?, approve? }.
 // progress(message) reports a status line while the tool runs (MCP progress notifications); front-ends
-// without it pass nothing. localCopy limits vm_copy's local: endpoints (see copyTool); front-ends that run
+// without it pass nothing. localCopy limits vm_copy's local: endpoints (see copyTool) and vm_sync's local checkout; front-ends that run
 // on the user's own machine pass nothing.
 //   engine: pi runs this tool with its own built-in engine (same rendering/truncation as bash, read, …)
 //   noVm:   the front-end does not resolve a VM; the tool gets every argument, `vm` included
@@ -16,6 +16,7 @@
 // them only through the Session hooks.
 import * as core from "./boxery-core.mjs";
 import { BACKENDS as BACKEND_DECLARATIONS } from "../backends/index.mjs";
+import { SYNC_OUTPUT, syncTool } from "./sync.mjs";
 /** @import { Approve, HostProfile, LocalConfinement, ManageArgs, Progress, ToolResult } from "./boxery-core.mjs" */
 /** A JSON Schema fragment. @typedef {{ type?: string | string[], description?: string, enum?: readonly string[], properties?: Record<string, JsonSchema>, items?: JsonSchema, required?: string[], anyOf?: JsonSchema[], minimum?: number, maximum?: number }} JsonSchema */
 /** A tool's input schema: always an object with named properties. @typedef {JsonSchema & { type: "object", properties: Record<string, JsonSchema>, required: string[] }} ObjectSchema */
@@ -178,6 +179,21 @@ export const TOOLS = [
 		parameters: obj({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]),
 		annotations: { destructiveHint: true, openWorldHint: false },
 		run: (_vm, a, x) => core.copyTool(a, { current: a.vm ?? x.current, localCwd: x.localCwd, local: x.localCopy, signal: x.signal }),
+	},
+	{
+		name: "vm_sync",
+		title: "VM sync",
+		description:
+			"Push a local git checkout into a VM so the VM's tree matches it exactly: same commit (detached HEAD), plus staged, unstaged and untracked changes, deletions included; the VM's ignored files (node_modules, builds) stay. " +
+			"Use it instead of vm_copy for a repository: it sends only what changed, needs no git remote or GitHub access, refuses VM-side edits it would overwrite, and reports whether lockfiles changed. " +
+			"It never syncs credentials: it refuses .env, .npmrc and other auth files (ask with vm_grant).",
+		parameters: obj({
+			from: { type: "string", description: "Local checkout (default: this agent's working directory)" },
+			to: { type: "string", description: `VM directory (default ${core.PROJECT}; relative paths are under it)` },
+		}),
+		annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+		outputSchema: SYNC_OUTPUT,
+		run: (vm, a, x) => syncTool(vm, a, { localCwd: x.localCwd, local: x.localCopy, signal: x.signal }),
 	},
 	{
 		name: "vm_screenshot",

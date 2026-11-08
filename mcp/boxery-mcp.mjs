@@ -7,10 +7,10 @@
 //        auth: bearer token from $BOXERY_MCP_TOKEN or --token-file (required unless --no-auth, loopback only),
 //              optional --allow-user a@b.c (checks Tailscale-User-Login from `tailscale serve`)
 //   --ui   offer vm_view (live desktop view) even to clients that don't advertise MCP Apps support
-//   --copy-root DIR   allow vm_copy local: paths only inside DIR (never boxery's config, ~/.ssh, ~/.pi)
+//   --copy-root DIR   allow vm_copy local: paths and vm_sync checkouts only inside DIR (never boxery's config, ~/.ssh, ~/.pi)
 //
 // "local" (vm_copy) and grant sources are the machine this server runs on. Over HTTP that is the
-// control plane, so vm_copy local: endpoints are refused unless --copy-root confines them.
+// control plane, so vm_copy local: endpoints and vm_sync are refused unless --copy-root confines them.
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -79,9 +79,19 @@ const LOCAL_COPY_NOTE =
 // ---------------------------------------------------------------- tools
 
 // Built from the shared table (core/boxery-tools.mjs), host selection included. MCP adds only
-// vm_copy's note on what `local:` means for this server, and the live desktop view below.
+// vm_copy's and vm_sync's notes on what `local:` means for this server, and the live desktop view below.
+// vm_sync reads a local checkout, so the same local: policy applies to it (core/sync.mjs).
+const LOCAL_SYNC_NOTE =
+	LOCAL_COPY === false
+		? "On this server vm_sync is disabled: it runs on the boxery control plane, not your machine."
+		: LOCAL_COPY
+			? `On this server \`from\` is a checkout on the machine it runs on, confined to ${COPY_ROOT} (relative paths resolve there).`
+			: null;
 /** @type {Record<string, (t: Tool) => Tool>} */
-const MCP_TOOL = { vm_copy: (t) => (LOCAL_COPY_NOTE ? { ...t, description: `${t.description} ${LOCAL_COPY_NOTE}` } : t) };
+const MCP_TOOL = {
+	vm_copy: (t) => (LOCAL_COPY_NOTE ? { ...t, description: `${t.description} ${LOCAL_COPY_NOTE}` } : t),
+	vm_sync: (t) => (LOCAL_SYNC_NOTE ? { ...t, description: `${t.description} ${LOCAL_SYNC_NOTE}` } : t),
+};
 /** @type {McpTool[]} */
 const TOOLS = SHARED_TOOLS.map((t) => MCP_TOOL[t.name]?.(t) ?? t).map((t) => ({
 	name: t.name,
@@ -226,7 +236,7 @@ const instructions = (/** @type {Session} */ s) =>
 		host: s.host.name,
 		localToolsNote:
 			"Your other tools (shell, files) act on this machine, not a VM; use them only when you mean to work here.",
-	}) + (LOCAL_COPY_NOTE ? `\nvm_copy: ${LOCAL_COPY_NOTE}` : "");
+	}) + (LOCAL_COPY_NOTE ? `\nvm_copy: ${LOCAL_COPY_NOTE}` : "") + (LOCAL_SYNC_NOTE ? `\nvm_sync: ${LOCAL_SYNC_NOTE}` : "");
 
 /** Send the client a request on this call's channel and resolve with its result. Abort sends notifications/cancelled.
  * @param {Session} session @param {Notify} send @param {string} method @param {object} params @param {AbortSignal} [signal] @returns {Promise<any>} */
