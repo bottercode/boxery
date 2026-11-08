@@ -24,6 +24,7 @@ case "\$*" in *cloud-init*|*6080*|*boxery-provision*) exit 0 ;; esac
 [ -n "\$host" ] || exit 0
 vm=$tmp/vms/\$host; [ -d "\$vm" ] || { echo "no such vm" >&2; exit 255; }
 mkdir -p "\$vm/home/project/.git/info"
+[ ! -f "\$vm/login-output" ] || cat "\$vm/login-output" # what a chatty login script prints first
 cd "\$vm/home" && HOME="\$vm/home" exec bash -c "\${*:-true}"
 STUB
 chmod +x "$tmp/bin/ssh"; export PATH="$tmp/bin:$PATH"
@@ -113,6 +114,20 @@ printf '#!/bin/sh\nprintf "pi\\t2\\t1700000000\\t1\\nweird \\"name\\t1\\t1700000
 "$A" sessions w1 --json | jq -e '. == [{name: "pi", windows: 2, created: 1700000000, attached: true}, {name: "weird \"name", windows: 1, created: 1700000001, attached: false}]' >/dev/null && ok "sessions --json (names escaped)" || bad "sessions --json: $("$A" sessions w1 --json 2>&1)"
 printf '#!/bin/sh\nexit 1\n' >"$tmp/bin/tmux"
 [ "$("$A" sessions w1 --json)" = '[]' ] && ok "sessions --json with no tmux server → []" || bad "sessions --json empty: $("$A" sessions w1 --json 2>&1)"
+# prompt checks that pi's provider is granted before it starts anything
+mkdir -p "$tmp/vms/w1/home/.pi/agent"; printf '{"defaultProvider": "openai-codex"}\n' >"$tmp/vms/w1/home/.pi/agent/settings.json"
+printf '{"providers": {"openai-codex": {"baseUrl": "http://127.0.0.1:8088/chatgpt/backend-api"}}}\n' >"$tmp/vms/w1/home/.pi/agent/models.json"
+printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/tmux"
+if out=$("$A" prompt w1 say hi 2>&1); then bad "prompt without an llm grant started: $out"
+elif [[ $out == *"needs llm:chatgpt"*"boxery grant w1 llm:chatgpt"* ]] && ! ls "$tmp/vms/w1/home/project/.boxery/"task-* >/dev/null 2>&1; then ok "prompt without pi's llm grant: refused, with the grant to run"
+else bad "prompt without a grant: $out"; fi
+# (a login script that prints something first doesn't hide pi's settings)
+echo "welcome to the VM" >"$tmp/vms/w1/login-output"
+if out=$("$A" prompt w1 say hi 2>&1) || [[ $out != *"needs llm:chatgpt"* ]]; then bad "prompt check with a chatty login: $out"; else ok "prompt's check reads pi's settings after a login script's output"; fi
+rm "$tmp/vms/w1/login-output"
+"$A" grant w1 llm:chatgpt >/dev/null 2>&1
+out=$("$A" prompt w1 say hi 2>&1) && [[ $out == *"started task-"* ]] && ok "prompt with pi's llm grant starts the task" || bad "prompt with the grant: $out"
+"$A" revoke w1 llm:chatgpt >/dev/null 2>&1
 rm -f "$tmp/bin/tmux"
 # A VM that doesn't exist (#210): ssh exits 255, and ControlPersist would hide the host's reason, so the
 # controller says it. A command's own exit 255 is not taken for that.

@@ -116,7 +116,7 @@ boxery --host hornet cp local:notes.md ci-1:~/notes.md
 
 `cp` is the `vm_copy` tool's own code, so it takes the same locations, `local:PATH`, `NAME:PATH` (a VM on the selected host) and `HOST/NAME:PATH`, and behaves the same way: streaming tar, staging, destination and cancellation rules are in [file transfers](copy.md). The one difference: the CLI has no current VM, so a bare path is on this machine, like `cp`/`scp` (`vm_copy` reads it as the current VM). A bare path that looks like a location with an invalid VM name (`Demo:x`) is refused instead of being written locally. Ctrl-C cancels and cleans up staging. `cp` runs on Node (≥ 20), which the npm package already needs.
 
-`prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`.
+`prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`. pi needs the `llm:` grant for its provider (`llm:chatgpt` unless you changed pi's settings in the VM), and a new VM has none: `prompt` checks first and, if it's missing, starts nothing and prints the `boxery grant` command to run.
 
 ### Background command jobs
 
