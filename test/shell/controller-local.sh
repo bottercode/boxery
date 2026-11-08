@@ -114,6 +114,14 @@ printf '#!/bin/sh\nprintf "pi\\t2\\t1700000000\\t1\\nweird \\"name\\t1\\t1700000
 printf '#!/bin/sh\nexit 1\n' >"$tmp/bin/tmux"
 [ "$("$A" sessions w1 --json)" = '[]' ] && ok "sessions --json with no tmux server → []" || bad "sessions --json empty: $("$A" sessions w1 --json 2>&1)"
 rm -f "$tmp/bin/tmux"
+# A VM that doesn't exist (#210): ssh exits 255, and ControlPersist would hide the host's reason, so the
+# controller says it. A command's own exit 255 is not taken for that.
+for c in "run nosuch true" "ssh nosuch true" "jobs nosuch" "sessions nosuch" "logs nosuch job-1"; do
+	rc=0; out=$(eval "\"\$A\" $c" 2>&1 </dev/null) || rc=$?
+	[[ $rc == 255 && $out == *"boxery: no such vm: nosuch on host local (boxery ls lists them)"* ]] && ok "$c: no such vm, exit 255" || bad "$c: rc=$rc $out"
+done
+rc=0; out=$("$A" run w1 bash -c 'exit 255' 2>&1) || rc=$?
+[[ $rc == 255 && $out != *boxery:* ]] && ok "run: the command's own exit 255 says nothing more" || bad "run exit 255: rc=$rc $out"
 [ "$("$A" leases --json)" = '[]' ] && ok "leases --json with none → []" || bad "leases --json empty"
 [ "$("$A" grants nogrants --json)" = '[]' ] && ok "grants --json with none → []" || bad "grants --json empty"
 "$A" snap w1 s1 >/dev/null 2>&1; [ "$("$A" snaps w1 --json | jq -c 'map({name})')" = '[{"name":"s1"}]' ] && ok "snaps --json via controller" || bad "snaps --json: $("$A" snaps w1 --json 2>&1)"

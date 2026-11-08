@@ -178,7 +178,7 @@ describe("stdio", () => {
 
 	test("errors are tool errors, never crashes: bad VM names, unknown tools, unknown methods", async () => {
 		assert.match((await c.tool("vm_bash", { vm: "Bad;Name", command: "x" })).content[0].text, /invalid VM name/);
-		assert.match((await c.tool("vm_bash", { vm: "othervm", command: "x" })).content[0].text, /unreachable/);
+		assert.match((await c.tool("vm_bash", { vm: "othervm", command: "x" })).content[0].text, /^no such vm: othervm on host \S+ \(boxery ls lists them\)$/);
 		assert.equal((await c.call("tools/call", { name: "nope", arguments: {} })).error.code, -32602);
 		assert.equal((await c.call("nope/method")).error.code, -32601);
 		assert.ok((await c.call("ping")).result);

@@ -42,7 +42,7 @@ before(() => {
 printf '%s\\n' "$*" >> ${JSON.stringify(path.join(dir, "host-invocations"))}
 [ "$1" != --profile ] || shift 2
 case "$*" in
-"ls --json") printf '[{"name":"fakevm","state":"running","ssh_addr":"%s"}]\\n' "$STUB_TAG" ;;
+"ls --json") printf '[{"name":"fakevm","state":"running","ssh_addr":"%s"},{"name":"sleepy","state":"stopped"},{"name":"pooled","state":"running","lease":{"state":"free"}},{"name":"lapsed","state":"running","lease":{"state":"free"}},{"name":"booting","state":"starting"}]\\n' "$STUB_TAG" ;;
 help) echo '  capabilities' ;;
 "init --backend broken") echo "backend check failed" >&2; exit 1 ;;
 "init --backend slow") sleep 30 ;;
@@ -298,6 +298,24 @@ test("boxery cp runs vm_copy: same locations, --host and the default host route,
 		assert.notEqual(r.code, 0, `boxery ${args.join(" ")} should fail`);
 		assert.match(r.stderr, /^boxery: /);
 	}
+});
+
+test("an unreachable VM says why (#210): no such VM, stopped, a pool VM this machine holds no lease on", async () => {
+	// lapsed: this machine's lease on it has expired.
+	const lease = `l-${"0".repeat(32)}`;
+	mkdirSync(path.join(profile("alpha"), "leases"), { recursive: true });
+	writeFileSync(path.join(profile("alpha"), "leases", `${lease}.lease`), `name=lapsed\nid=${lease}\nexpires=1\nttl=60\nholder=\n`);
+	const c = client(["--host", "alpha"]);
+	for (const [vm, why] of /** @type {[string, RegExp][]} */ ([["ghost", /^no such vm: ghost on host alpha \(boxery ls lists them\)$/], ["sleepy", /^VM sleepy is stopped; start it: boxery start sleepy$/],
+		["booting", /^VM booting is starting; try again when it's running/], ["pooled", /^VM pooled is in the host's shared pool: .*this machine holds none/],
+		["lapsed", /^your lease on VM lapsed has expired/]])) {
+		const r = await c.tool("vm_bash", { vm, command: "true" });
+		assert.equal(r.isError, true, vm);
+		assert.match(text(r), why);
+	}
+	rmSync(path.join(profile("alpha"), "leases"), { recursive: true, force: true });
+	// A command's own 255 is its exit code: a fresh connection works, so the VM isn't unreachable.
+	assert.match(text(await c.tool("vm_bash", { vm: "fakevm", command: "exit 255" })), /\[exit 255\]$/);
 });
 
 test("timeout cleanup stays on the snapshotted host after a concurrent session switch", async () => {

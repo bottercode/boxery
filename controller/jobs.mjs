@@ -28,8 +28,8 @@ function jobsRunner() {
 const helper = (name, args, own = false) => ["-T", ...(own ? ["-o", "ControlMaster=no", "-o", "ControlPath=none"] : []), `${needVm(name)}.boxery`, `${JOBS_NODE} ${args.join(" ")}`];
 /** The helper, sharing this terminal: its exit status. @param {Selected} s @param {string} name @param {string[]} args @param {{ own?: boolean }} [o] */
 const jobsVm = (s, name, args, { own = false } = {}) => vmSsh(s, helper(name, args, own), { input: readFileSync(jobsTs()) });
-/** The helper, its output captured. @param {Selected} s @param {string} name @param {string[]} args */
-const jobsVmCapture = (s, name, args) => vmSshCapture(s, helper(name, args), readFileSync(jobsTs()));
+/** The helper, its output captured. @param {Selected} s @param {string} name @param {string[]} args @param {{ explain?: boolean }} [o] */
+const jobsVmCapture = (s, name, args, o) => vmSshCapture(s, helper(name, args), readFileSync(jobsTs()), o);
 /** @param {number} rc */
 const exit = (rc) => { if (rc) throw new CliError("", rc); };
 
@@ -98,7 +98,8 @@ export async function waitJob(s, [vm, job, ...rest]) {
 	for (;;) {
 		const limit = deadline == null ? -1 : Math.max(0, deadline - Math.floor(Date.now() / 1000));
 		// --exit0: the helper exits 0 whenever it answers, so ssh's own 255 can't be confused with a job's.
-		const r = await jobsVmCapture(s, name, ["wait", id, "--timeout", String(limit), "--exit0"]);
+		// (Once the VM has answered, a dropped connection is a reconnect, not a reason to look into it.)
+		const r = await jobsVmCapture(s, name, ["wait", id, "--timeout", String(limit), "--exit0"], { explain: !reached });
 		if (r.stdout) reached = true;
 		const out = r.stdout.split("\n").filter((l) => l !== "").join("\n"); // newlines sent while waiting (heartbeat)
 		if (r.code !== 0 || !out) {

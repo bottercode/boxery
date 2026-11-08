@@ -12,7 +12,7 @@ import * as linux from "../guests/linux.mjs";
 import { q } from "./shell.mjs";
 import { streamCopy } from "./copy-stream.mjs";
 import { VALID_DEST, shellWord } from "./ssh-config.mjs";
-import { acquireLease, releaseLease, renewLease } from "./leases.mjs";
+import { acquireLease, findLease, releaseLease, renewLease } from "./leases.mjs";
 import * as lifecycle from "./lifecycle.mjs";
 import { versions as versionInfo } from "./versions.mjs";
 import { parseGrantRequest, grantPrompt, grantCommand, listGrants, addGrants } from "./grants.mjs";
@@ -289,13 +289,15 @@ export function parseLoc(spec, current) {
 
 /**
  * Run a bash script in a VM. opts: { input, signal, timeoutMs, onData }.
- * Resolves { code, stdout: Buffer, stderr }. ssh exit 255 (transport failure) rejects.
+ * Resolves { code, stdout: Buffer, stderr }. ssh exit 255 rejects with why the VM can't be reached
+ * (vmProblem), unless a fresh connection works: then the 255 was the script's own and resolves.
  * @param {string} vm @param {string} script @param {SshRunOpts} [opts] @returns {Promise<SshResult>}
  */
 export function sshRun(vm, script, opts = {}) {
 	return new Promise((resolve, reject) => {
 		if (!VALID_NAME.test(vm ?? "")) return reject(new Error(`invalid VM name "${vm}"`));
-		const { sshConf } = currentHost();
+		const host = currentHost();
+		const { sshConf } = host;
 		if (!existsSync(sshConf)) return reject(new Error(`boxery not set up (${sshConf} missing); run: boxery setup user@host`));
 		// stdin is a pipe whenever it is used (opts.input != null).
 		const child = /** @type {ChildProcessWithoutNullStreams} */ (spawn("ssh", ["-F", sshConf, ...(opts.batch === false ? [] : ["-o", "BatchMode=yes"]), `${vm}.boxery`, `bash -c ${q(script)}`], {
@@ -308,7 +310,7 @@ export function sshRun(vm, script, opts = {}) {
 		let timer;
 		let size = 0;
 		const cap = opts.maxBytes ?? MAX_CAPTURE;
-		let overflow = false;
+		let overflow = false, stopped = false;
 		child.stdout.on("data", (/** @type {Buffer} */ d) => {
 			if (opts.onData) return opts.onData(d);
 			size += d.length;
@@ -327,6 +329,7 @@ export function sshRun(vm, script, opts = {}) {
 		// ssh gets EPIPE at its next write. Other callers keep them: e.g. vm_edit's guest cleans up on SIGTERM
 		// and must not be cut off mid-cleanup.
 		function stop() {
+			stopped = true;
 			child.kill();
 			if (!opts.closePipes) return;
 			child.stdout.destroy();
@@ -340,8 +343,12 @@ export function sshRun(vm, script, opts = {}) {
 			if (timer) clearTimeout(timer);
 			opts.signal?.removeEventListener("abort", onAbort);
 			if (overflow) return reject(new Error(`output exceeded ${Math.round(cap / 1048576)} MiB; refusing to buffer more`));
-			if (code === 255) return reject(new Error(`VM "${vm}" unreachable over ssh: ${err.trim() || "connection failed"}`));
-			resolve({ code, stdout: Buffer.concat(out), stderr: err });
+			const said = `VM "${vm}" unreachable over ssh: ${err.trim() || "connection failed"}`;
+			// (Stopped by abort or timeout: ssh's 255 then is ours, and the caller isn't kept waiting.)
+			if (code === 255 && stopped) return reject(new Error(said));
+			const result = { code, stdout: Buffer.concat(out), stderr: err };
+			if (code !== 255) return resolve(result);
+			withHost(host, () => vmProblem(vm, { env: opts.env })).then((p) => (p ? reject(new Error(p.message)) : resolve(result)), () => reject(new Error(said)));
 		});
 		if (opts.input != null) {
 			child.stdin.on("error", () => {}); // EPIPE if the remote side exits early; the exit code reports it
@@ -355,6 +362,53 @@ export async function sshOk(vm, script, opts = {}) {
 	const r = await sshRun(vm, script, opts);
 	if (r.code !== 0) throw new Error(r.stderr.trim() || `command failed (exit ${r.code})`);
 	return r.stdout;
+}
+
+// ---------------------------------------------------------------- why a VM can't be reached
+
+/** What the host says of a VM it doesn't have, and where to look. @param {string} vm */
+export const noSuchVm = (vm) => `no such vm: ${vm} on host ${currentHost().name} (boxery ls lists them)`;
+
+/** A VM's problem, for a person or an agent. known: the host's records explain it (no such VM, not running, a
+ *  pool VM without a lease), so nothing can have run there; otherwise message is what ssh said.
+ *  @typedef {{ message: string, known: boolean }} VmProblem */
+
+/**
+ * Why ssh to VM `vm` exited 255, or null when it can be reached after all. 255 is ssh's own failure but also a
+ * remote command's exit status, and with ControlPersist (the profile's ssh_config) OpenSSH sends the
+ * ProxyCommand's stderr to /dev/null, so boxery-host connect's "no such vm" never shows (#210). So: first a
+ * connection of its own, which keeps that stderr; if it connects, the 255 was the command's. Otherwise the
+ * host's VM list says what to do, else what that connection printed. Costs a connection and a host call (each
+ * bounded to 20 s), so only failures call it; the fast path (connect, shared masters) is unchanged. env: ssh's
+ * environment.
+ * @param {string} vm @param {{ env?: NodeJS.ProcessEnv }} [opts] @returns {Promise<VmProblem | null>}
+ */
+export async function vmProblem(vm, { env } = {}) {
+	assertName(vm);
+	const probe = await new Promise((/** @type {(r: { code: number | null, stderr: string }) => void} */ resolve) => {
+		const child = spawn("ssh", ["-F", currentHost().sshConf, "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", `${vm}.boxery`, "true"],
+			{ stdio: ["ignore", "ignore", "pipe"], ...(env ? { env } : {}) });
+		let stderr = "";
+		child.stderr.on("data", (/** @type {Buffer} */ d) => { if (stderr.length < 16 * 1024) stderr += d.toString(); });
+		const timer = setTimeout(() => child.kill(), 20_000);
+		child.on("error", (e) => { clearTimeout(timer); resolve({ code: null, stderr: e.message }); });
+		child.on("close", (code) => { clearTimeout(timer); resolve({ code, stderr }); });
+	});
+	if (probe.code === 0) return null;
+	const said = probe.stderr.split("\n").map((l) => l.trim()).filter(Boolean).slice(-3).join("; ");
+	let vms;
+	try { vms = /** @type {VmInfo[]} */ (await lifecycle.listVms({}, { signal: AbortSignal.timeout(20_000) })); }
+	catch (e) { return { message: `VM "${vm}" unreachable over ssh: ${said || /** @type {Error} */ (e).message}`, known: false }; }
+	const v = vms.find((r) => r.name === vm);
+	if (!v) return { message: noSuchVm(vm), known: true };
+	if (v.state && !["running", "idle"].includes(v.state))
+		return { message: /ing$/.test(v.state) ? `VM ${vm} is ${v.state}; try again when it's running (boxery ls shows its state)` : `VM ${vm} is ${v.state}; start it: boxery start ${vm}`, known: true };
+	if (v.lease) {
+		const mine = findLease(vm);
+		if (!mine) return { message: `VM ${vm} is in the host's shared pool: only the holder of a lease on it can reach it, and this machine holds none (boxery acquire leases a pool VM; boxery leases lists yours)`, known: true };
+		if (mine.expires * 1000 < Date.now()) return { message: `your lease on VM ${vm} has expired, so it no longer lets you in (boxery leases lists yours; boxery acquire leases a pool VM again)`, known: true };
+	}
+	return { message: `VM "${vm}" unreachable over ssh: ${said || (probe.code == null ? "timed out" : "connection failed")}`, known: false };
 }
 
 /** The last non-empty line of an output chunk, for progress messages. */
@@ -401,7 +455,9 @@ export function execRemote(vm, command, cwd, { onData, signal, timeout } = {}) {
 			})
 			.catch((e) => {
 				if (timer) clearTimeout(timer);
-				reject(e);
+				signal?.removeEventListener("abort", onAbort);
+				// (Our own abort ends ssh with 255: report the abort or timeout, not an unreachable VM.)
+				reject(signal?.aborted ? new Error("aborted") : timedOut ? new Error(`timeout:${timeout}`) : e);
 			});
 	});
 }
