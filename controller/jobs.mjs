@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JOBS_NODE, VALID_JOB } from "../core/boxery-core.mjs";
 import { closeMaster } from "../core/profile.mjs";
-import { CliError, die, duration, needVm, note, num, quit, say, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { CliError, die, duration, needVm, note, num, quit, say, usage, vmSsh, vmSshCapture, warn } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 
@@ -56,7 +56,7 @@ export async function jobs(s, [vm, ...rest]) {
 		if (rest[i] === "--json") json = true;
 		else if (rest[i] === "--prune") prune = true;
 		else if (rest[i] === "--older-than") older = duration("--older-than", rest[++i]);
-		else die("usage: boxery jobs NAME [--json] | jobs NAME --prune [--older-than 7d] [--json]");
+		else usage("jobs");
 	}
 	if (prune) return exit(await jobsVm(s, name, ["prune", "--older-than", String(older), ...(json ? [] : ["--text"])]));
 	if (older) die("--older-than goes with --prune");
@@ -75,7 +75,7 @@ export async function logs(s, [vm, job, ...rest]) {
 		else if (["-n", "--lines", "--tail"].includes(f)) { a.push("--lines", String(num("--lines", rest[++i]))); lines = true; }
 		else if (f === "--bytes") a.push("--bytes", String(num("--bytes", rest[++i], 1)));
 		else if (f === "--strip-ansi") a.push("--strip-ansi");
-		else die("usage: boxery logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]");
+		else usage("logs");
 	}
 	if (!lines) a.push("--lines", "200");
 	exit(await jobsVm(s, name, ["logs", id, ...a], { own }));
@@ -93,7 +93,7 @@ export async function waitJob(s, [vm, job, ...rest]) {
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === "--timeout") deadline = Math.floor(Date.now() / 1000) + num("--timeout", rest[++i]);
 		else if (rest[i] === "--json") json = true;
-		else die("usage: boxery wait NAME JOB [--timeout S] [--json]");
+		else usage("wait");
 	}
 	for (;;) {
 		const limit = deadline == null ? -1 : Math.max(0, deadline - Math.floor(Date.now() / 1000));
@@ -133,7 +133,7 @@ export async function kill(s, [vm, job, ...rest]) {
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === "--grace") a.push("--grace", String(num("--grace", rest[++i])));
 		else if (rest[i] === "--json") text = false;
-		else die("usage: boxery kill NAME JOB [--grace S] [--json]");
+		else usage("kill");
 	}
 	exit(await jobsVm(s, name, ["kill", id, ...(text ? ["--text"] : []), ...a]));
 }

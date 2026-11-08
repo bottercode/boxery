@@ -8,9 +8,10 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { hostCommand } from "../core/profile.mjs";
 import { CliError, VALID_VM, capture, die, note, warn } from "./lib.mjs";
+import { usageText } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
-const USAGE = "usage: boxery runners once [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]";
+const USAGE = () => usageText("runners", { sub: "once" });
 
 /** gh ARGS, its stdout (stderr captured for errors). @param {string[]} args @param {string} [input] */
 function gh(args, input) {
@@ -32,9 +33,9 @@ export async function runnersOnce(s, args) {
 	let repo = "", org = "", vms = "", labels = "", group = "";
 	for (let i = 0; i < args.length; i += 2) {
 		const f = args[i], v = args[i + 1];
-		if (["-h", "--help"].includes(f)) { process.stdout.write(`${USAGE}\n`); return; }
-		if (!["--repo", "--org", "--vms", "--labels", "--group"].includes(f)) die(`unknown argument: ${f}\n${USAGE}`);
-		if (!v) die(`${f} needs a value\n${USAGE}`);
+		if (["-h", "--help"].includes(f)) { process.stdout.write(`${USAGE()}\n`); return; }
+		if (!["--repo", "--org", "--vms", "--labels", "--group"].includes(f)) die(`unknown argument: ${f}\n${USAGE()}`);
+		if (!v) die(`${f} needs a value\n${USAGE()}`);
 		if (f === "--repo") repo = v; else if (f === "--org") org = v; else if (f === "--vms") vms = v; else if (f === "--labels") labels = v; else group = v;
 	}
 	if (repo && org) die("pass one of --repo OWNER/REPO or --org ORG");

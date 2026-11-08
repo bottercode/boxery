@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:os";
 import { acquireLease, leaseRows, localLeases, releaseLease, renewLease } from "../core/leases.mjs";
-import { die, hostFailed, note, quit, say } from "./lib.mjs";
+import { die, hostFailed, note, quit, say, usage } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 /** Like `date`: the local format people read elsewhere in the CLI. @param {number} t unix seconds */
@@ -66,7 +66,7 @@ export async function leaseCommand(_s, command, args) {
 		}
 		case "leases": {
 			const json = args[0] === "--json";
-			if (args.length > 1 || (args.length === 1 && !json)) die("usage: boxery leases [--json]");
+			if (args.length > 1 || (args.length === 1 && !json)) usage("leases");
 			if (json) {
 				const rows = leaseRows().map((r) => JSON.stringify(r));
 				return say(rows.length ? `[\n${rows.join(",\n")}\n]` : "[]");
