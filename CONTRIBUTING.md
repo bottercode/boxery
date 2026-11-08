@@ -1,18 +1,42 @@
 # Contributing / testing
 
+boxery has no build step and no runtime dependencies: clone it and run the commands below with Node ≥ 22.13. [ARCHITECTURE.md](ARCHITECTURE.md) maps the code; [AGENTS.md](AGENTS.md) is guidance for coding agents (and a fair summary of how the code is meant to be shaped).
+
+```bash
+npm run lint && npm test && npm run test:shell
+```
+
 | Layer | Command | Needs |
 |---|---|---|
-| Lint (shellcheck + node syntax) | `npm run lint` | shellcheck, node |
-| Type check: the `.mjs` sources (JSDoc types, `checkJs`), the tests (`test/tsconfig.json`) and VM-side `core/*.ts` | `npm i --no-save typescript@5.9.3 @types/node@22 && npm run typecheck` | node |
+| Lint: shellcheck (warnings are errors), `node --check`, `bash -n`, and that `core/*.ts` parses under type stripping | `npm run lint` | shellcheck, node |
+| Type check: the `.mjs` sources (JSDoc types, `checkJs`), the tests (`test/tsconfig.json`), `evals/` and VM-side `core/*.ts` | `npm i --no-save typescript@5.9.3 @types/node@22 && npm run typecheck` | node |
 | Unit/integration tests: core helpers, proxy, MCP, SQLite leases and lifecycle crash recovery (real host dispatcher with a fake backend), background jobs (real CLI + MCP, helper run as in a VM) | `npm test` | node ≥ 22.13; job cases need ≥ 22.18; python3 ≥ 3.9 for real-PTY grant tests |
 | Shell tests: host dispatcher against the `fake` backend, leases, images/forks (`host-images.sh`: the behaviour every backend must match), controller local mode + grants, named registry/import/defaults, injection/concurrency regressions | `npm run test:shell` | bash, jq, openssl, node ≥ 22.13, ps (procps on Linux) |
 | Same under macOS's bash 3.2 | `docker run --rm -v "$PWD":/src:ro bash:3.2 bash -c 'apk add -q openssh-client jq coreutils openssl nodejs perl git procps-ng; cp -r /src /w && cd /w && bash test/shell/run.sh'` | docker |
 | OpenShell live smoke (opt-in) | `node test/openshell-smoke.mjs HOST` | a configured OpenShell host with the bundled offline policy; creates/removes one disposable sandbox |
 | MCP protocol against a live VM | `mcp/test-mcp.sh VM` | a VM |
-| End-to-end (create VM → agents → proxy → extension → MCP → grants → snapshots → rm) | `./e2e.sh` | a configured host (libvirt or Lima); a terminal to approve 3 grant prompts, or `GRANT_CONFIRM=off` in the profile for unattended runs (use a throwaway `BOXERY_HOME`, see [grants](docs/grants.md#headless-automation)) |
+| End-to-end (create VM → agents → proxy → extension → MCP → grants → snapshots → rm) | `./e2e.sh` | a configured host (any backend, after `boxery setup`); a terminal to approve 3 grant prompts, or `GRANT_CONFIRM=off` in the profile for unattended runs (use a throwaway `BOXERY_HOME`, see [grants](docs/grants.md#headless-automation)) |
 | Agent behaviour evals: when an agent reaches for the `vm_*` tools, which ones, and whether it follows instructions ([evals/](evals/README.md)) | `cd evals && node run.mjs` | `claude` CLI signed in, a host with two VMs; spends tokens |
 
-CI (`.github/workflows/ci.yml`) runs lint, the type check, unit tests on Node 22/24/26, shell tests, bash 3.2, and a real macOS runner on every push and PR. `e2e.sh` needs KVM or Lima, so it runs manually (or on a self-hosted runner).
+CI (`.github/workflows/ci.yml`) runs on PRs and pushes to `master`: lint and the type check, unit tests on Node 22/24/26, shell tests, the shell tests under bash 3.2 (docker), and on a macOS runner the shell tests under its `/bin/bash` and the unit tests. It skips changes that touch only `*.md`, `docs/` or `LICENSE`; after a docs-only change, run `node --test test/help-drift.test.mjs test/backend-capabilities.test.mjs` yourself, since they check docs. `e2e.sh` and the other live checks need a real host, so they run by hand.
+
+## When you add or change something
+
+| Change | Also |
+|---|---|
+| a `vm_*` tool or action | the table in `core/boxery-tools.mjs`, not one front-end (`test/frontends.test.mjs`); map it to a `boxery` command in `test/parity.test.mjs`, or say why it has none |
+| a `boxery` command or flag | its `help` in `controller/cli.mjs`'s `COMMANDS`; map it in `test/parity.test.mjs`; `npm run docs:cli`; review the help change, then `BOXERY_UPDATE_GOLDEN=1 node --test test/help-drift.test.mjs` |
+| a `boxery-host` command or flag | its help in `host/help.mjs` (`host/cli.mjs` won't load without it); `npm run docs:cli`; output formats are pinned by `test/shell/host-output.sh` |
+| a backend | `host/backends/NAME.sh` ([contract](host/backends/README.md)); a declaration in `backends/index.mjs` ([support contract](docs/backends.md), `test/backend-capabilities.test.mjs`); its `BOXERY_NAME_*` settings in `host/host-env.list`; tests like `test/shell/host-lima-backend.sh`; the README's platform lists |
+| a shell test | add it to the list in `test/shell/run.sh`, which doesn't glob; keep its state in its own `mktemp -d` |
+| a source directory or file glob | `test/lint.sh`, the `include` of `tsconfig.json`, and `files` in `package.json` if it ships |
+| anything a user sees | the docs that describe it (`docs/`, README, ARCHITECTURE.md), in the same change |
+
+## Pull requests
+
+Commit and PR titles say where and what: `fix(host): …`, `feat(exe): …`, `docs(readme): …`, `test: …`, with the issue they close as `(#123)`. Split a large change into a stack of PRs that each pass CI, and say so in each title: `(stack 2/3)`. Run lint and both test suites before you open one.
+
+## Notes on the code and tests
 
 Types: the code is plain JavaScript typed with JSDoc comments (`/** @param {string} name */`, `@typedef`, `/** @import { Runtime } from "./runtime.mjs" */`), checked by `tsc` under `strict`. There is no build step, and nothing to strip: npm installs live under `node_modules`, where Node refuses to strip TypeScript types, so files that ship stay `.mjs`. Define a shared shape as a `@typedef` in the module that owns it. Only `core/*.ts` is TypeScript syntax: it is piped into the VM and run under type stripping, so it must stay erasable.
 
@@ -28,8 +52,8 @@ Types: the code is plain JavaScript typed with JSDoc comments (`/** @param {stri
 
 `test/lease-workflows.test.mjs` tests lease policy directly through injected store/backend/journal dependencies, without SQLite or subprocesses. [Host module boundaries](docs/host-modules.md) documents ownership and dependencies. `test/operations.test.mjs` uses deterministic fake-backend barriers to SIGKILL supervisors while their worker groups are alive, checking both recovery and external side effects. Keep these tests offline: they use only temporary config and VM directories. The [lifecycle contract](docs/lifecycle.md) documents resource boundaries, durable intents and backend recovery responsibilities.
 
-Backends live in `host/backends/<name>.sh` and implement the contract in `host/backends/README.md`; `fake.sh` is the test double.
+Backends live in `host/backends/<name>.sh` and implement the contract in `host/backends/README.md`; `fake.sh` is the test double. What is written in Bash (the entry shims, `connect`, the backends, the job runner) runs under macOS's bash 3.2; [AGENTS.md](AGENTS.md#node-and-bash) explains why each of those is Bash and when to move one to Node.
 
 Named-host interface/layout: [docs/hosts.md](docs/hosts.md). `test/hosts.test.mjs` uses independent fake profile directories and SSH/host stubs to check duplicate VM names, per-call contexts, cross-host copies, timeout cleanup and HTTP session isolation. `test/shell/controller-hosts.sh` exercises the real CLI (`controller/boxery` → `cli.mjs`) and real `ssh -G` config parser without connecting to any host, including remote tilde and hostile executable paths. All profiles and grants are temporary; never point offline tests at a real BOXERY_HOME. For native macOS Bash 3.2 (what still runs in Bash: entry shims, `connect`, backends, sourced profile configs): `BASH_UNDER_TEST=/bin/bash npm run test:shell`.
 
-Live local/Hornet MCP checks are separate and require explicit user authorization and any host-required lease. Registration is not lease acquisition. Do not import private app recipes, credentials, or local agent task files into public changes.
+Live checks (`e2e.sh`, `mcp/test-mcp.sh`, `test/openshell-smoke.mjs`, `test/bench/vm-startup.mjs`) create and remove real VMs: run them against a host you own, and on a shared host take any lease it requires first (registering a host is not acquiring a lease). Keep hostnames, credentials and private app recipes out of public changes.
