@@ -34,15 +34,16 @@
  *  @typedef {{ intent(kind: string, data: string[]): string | Promise<string>, done(id: string): unknown }} LeaseJournal */
 /** Run CALLBACK ARGV through the supervisor with VM NAME locked.
  *  @typedef {(name: string, callback: string, argv: Array<string | number>) => Promise<unknown>} LeaseLock */
-/** @typedef {{ store: LeaseStore, backend: LeaseBackend, journal: LeaseJournal, lock: LeaseLock, reclaim: () => Promise<unknown>,
- *    now: () => number, sleep: (ms: number) => Promise<unknown>, log: (message: string) => unknown }} LeaseDeps */
+/** hint: a command for a message, as the person would type it (host/util.mjs hint; default boxery-host).
+ *  @typedef {{ store: LeaseStore, backend: LeaseBackend, journal: LeaseJournal, lock: LeaseLock, reclaim: () => Promise<unknown>,
+ *    now: () => number, sleep: (ms: number) => Promise<unknown>, log: (message: string) => unknown, hint?: (command: string) => string }} LeaseDeps */
 
 export class LeaseWorkflows {
 	/** @param {LeaseDeps} deps */
-	constructor({ store, backend, journal, lock, reclaim, now, sleep, log }) {
+	constructor({ store, backend, journal, lock, reclaim, now, sleep, log, hint = (command) => `boxery-host ${command}` }) {
 		// Plain assignments (not Object.assign) so the checker sees the fields.
 		this.store = store; this.backend = backend; this.journal = journal; this.lock = lock;
-		this.reclaim = reclaim; this.now = now; this.sleep = sleep; this.log = log;
+		this.reclaim = reclaim; this.now = now; this.sleep = sleep; this.log = log; this.hint = hint;
 	}
 
 	/** The row if it is still at this generation, incarnation and state, else null.
@@ -128,7 +129,7 @@ export class LeaseWorkflows {
 		if (!this.store.finish(name, gen, state)) throw new Error(`${name}: reset commit failed`);
 		this.log(healthy
 			? `${name} reset → FREE`
-			: `${name} reset FAILED → BROKEN (fix it, then: boxery-host pool rm ${name} && boxery-host pool add ${name})`);
+			: `${name} reset FAILED → BROKEN (fix it, then: ${this.hint(`pool rm ${name}`)} && ${this.hint(`pool add ${name}`)})`);
 		await this.journal.done(action);
 	}
 

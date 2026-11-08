@@ -38,8 +38,9 @@ export function checkTarget(t) {
 /** HOST=local: HOST_BIN on this machine (~/ is $HOME). @param {string} hostBin @param {string} home */
 export const localHostBin = (hostBin, home) => (hostBin.startsWith("~/") ? `${home}/${hostBin.slice(2)}` : hostBin);
 const profileArgs = (/** @type {Target} */ t) => (t.hostProfile ? ` --profile ${t.hostProfile}` : "");
-/** The command ssh sends to a remote host for boxery-host ARGS. @param {Target} t @param {string[]} args */
-export const remoteCommand = (t, args) => `exec ${remotePath(t.hostBin)}${profileArgs(t)} ${literalArgs(args)}`;
+/** The command ssh sends to a remote host for boxery-host ARGS. cli: how the person ran boxery, which the
+ *  host's hints name (BOXERY_CLI: controller/lib.mjs invokedAs). @param {Target} t @param {string[]} args @param {string} [cli] */
+export const remoteCommand = (t, args, cli) => `exec ${cli ? `env BOXERY_CLI=${literal(cli)} ` : ""}${remotePath(t.hostBin)}${profileArgs(t)} ${literalArgs(args)}`;
 
 /**
  * The profile's ssh_config. leases: [{name, id}] (each lease's own key, in DIR/leases); agentVms: VMs

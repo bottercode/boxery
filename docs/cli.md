@@ -8,7 +8,9 @@
 
 ## `boxery` (your laptop)
 
-`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
+`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`. `boxery --version` (or `-V`) is `boxery version`.
+
+Exit status: `0` on success; a command that runs something in the VM (`run`, `ssh`, `attach`, `wait` and the like) exits with its status, so a script can't tell boxery's codes from the command's. boxery's own failures exit `1`, and its usage errors (an unknown command or flag, a missing argument or flag value, arguments that don't fit the command's usage) exit `2`. A value that is refused (an invalid name, a VM that doesn't exist) is a failure, `1`, and so is a usage error that the host reports for a command boxery passes to it (`images`, `pool`, `runners`, …).
 
 - [All commands](#all-commands), generated from the same help
 
@@ -60,7 +62,7 @@ boxery pin demo [--from-guest]               # re-pin demo's ssh host key (a VM 
 
 **Host keys.** Every ssh to a VM checks its host key, which is pinned on the host when the VM is made ([security](security.md#vm-host-keys)). A VM made before that, or whose record was lost, fails with "Host key verification failed" until you run `boxery pin NAME`. That reads the key through the hypervisor (libvirt's guest agent) or the host's loopback endpoint (Lima, exe, boat). `--from-guest` instead trusts what the VM's ssh endpoint answers, once. `boxery start NAME` pins it automatically where it can.
 
-**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows `outdated guest (REASONS)` in its STATUS column when it is (`guest` in `--json`, with `status` `outdated`, `current` or `unknown`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. After the table, `ls` names the outdated VMs again on stderr with how to update them, and the running VMs not checked yet.
+**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows `outdated guest (REASONS)` in its STATUS column when it is (`guest` in `--json`, with `status` `outdated`, `current` or `unknown`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. After the table, `ls` names the outdated VMs again on stderr with how to update them, and the running VMs not checked yet. `new` warns when a VM is outdated from the start because what it was made from is: an outdated desktop base or snapshot (`fork`: its source, once). `boxery patch NAME` updates the VM; to make new desktop VMs current, rebuild the base (`boxery build-base`, once no VM depends on it). A headless VM whose first-boot package updates ask for a reboot (a new kernel) is restarted once by `new`, so it starts current.
 
 `boxery patch NAME` updates a running VM in place: it copies the host's current image layers into the VM, runs the layers the VM has again (security updates and kernel with `apt-get full-upgrade`, and what the layers install outside apt: `playwright-core` and, on arm64, its Chromium; the pi and opencode CLIs; node 24), and restarts the VM if the updates ask to (its tmux sessions end; its grants are pushed again). It takes a few minutes, streams the layers' progress and logs everything to `/var/log/boxery-patch.log` in the VM. `--all` patches every running VM in turn, and says which it skipped (stopped VMs, pool VMs with a lease). A pool VM must be free: `patch` refuses one with a lease, or waits up to `--wait S` seconds for it to end; while it is patched no lease can start on it, and its clean image (`NAME@boxery-clean`) is captured again, so later leases start patched. **Snapshots and images are not patched**: `snaps` and `images` show their age and the guest software they hold, and a VM made or reverted from an outdated one is outdated until you patch it. A VM from a desktop base built before build records shows `unknown`; patching gives it a record. To patch the base itself, rebuild it (`boxery build-base`).
 
@@ -86,6 +88,7 @@ Snapshots and forks are built on one backend primitive, the image (a copy of a V
 
 ```bash
 boxery ssh demo [cmd…]                       # interactive shell (or: ssh demo.boxery)
+boxery ssh demo@lab                         # a VM on registered host lab (no default change)
 boxery run demo git log --oneline -5         # exact argv, like docker exec; runs in ~/project
 boxery run demo --cwd app pnpm test          # in ~/project/app
 boxery run demo bash -c 'make test 2>&1 | tail'   # a shell line: bash -c
@@ -97,7 +100,12 @@ boxery sessions demo [--json]                # list tmux sessions
 
 `run` works like `docker exec` / `kubectl exec`: the command gets exactly the arguments you pass, and nothing in them (quotes, `$`, `~`, globs, `;`) is re-parsed in the VM. For pipes, `&&`, `~` or `$VAR`, run a shell explicitly with `bash -c '…'` (how `run` used to treat every command). A whole command line passed as one argument (`boxery run demo 'make test'`) is looked up as a single command name and fails with a hint. An argument that is `~`, starts with `~/` or contains `$VAR`/`${…}` reaches the command literally and exits 0, so `run` adds a note on stderr pointing at `bash -c` (not when the command is a shell or an interpreter such as awk, perl or jq, whose code uses `$`). Like the `vm_bash` tool, `run` starts in `~/project` (home if there is none), and a relative `--cwd DIR` is under `~/project`; `~/` expands in the VM and absolute paths are used as is. `--` ends `run`'s own options. The exit code is the command's. `ssh NAME cmd…` keeps plain ssh semantics.
 
-When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that run commands in a VM (`vm_bash`, `vm_jobs`, the file and desktop tools) report the same.
+`ssh NAME@HOST [CMD...]` is shorthand for `--host HOST ssh NAME [CMD...]`.
+`HOST` is a registered Boxery host, not an SSH destination or username. A matching
+`--host` is allowed; conflicting selectors are rejected before connecting. The
+shorthand does not change the default host and works even when none is selected.
+
+When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` (and `cp`, which exits 1; see [Copying files](copy.md)) say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that reach a VM (`vm_bash`, `vm_jobs`, `vm_copy`, the file and desktop tools) report the same. `grants NAME` says `no such vm` too.
 
 ### Files
 
@@ -110,7 +118,7 @@ boxery --host hornet cp local:notes.md ci-1:~/notes.md
 
 `cp` is the `vm_copy` tool's own code, so it takes the same locations, `local:PATH`, `NAME:PATH` (a VM on the selected host) and `HOST/NAME:PATH`, and behaves the same way: streaming tar, staging, destination and cancellation rules are in [file transfers](copy.md). The one difference: the CLI has no current VM, so a bare path is on this machine, like `cp`/`scp` (`vm_copy` reads it as the current VM). A bare path that looks like a location with an invalid VM name (`Demo:x`) is refused instead of being written locally. Ctrl-C cancels and cleans up staging. `cp` runs on Node (≥ 20), which the npm package already needs.
 
-`prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`.
+`attach` starts pi, opencode or a shell (nothing else) and needs a terminal; without one it says to use `prompt` or `run --bg`, which work headless. `prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`. pi needs the `llm:` grant for its provider (`llm:chatgpt` unless you changed pi's settings in the VM), and a new VM has none: `prompt` checks first and, if it's missing, starts nothing and prints the `boxery grant` command to run.
 
 ### Background command jobs
 
@@ -256,7 +264,7 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 | Command | What it does |
 |---|---|
-| `boxery ssh NAME [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
+| `boxery ssh NAME[@HOST] [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
 | `boxery run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]` | Run a command in ~/project, args as given (like docker exec) [→](#shell-and-in-vm-agents) |
 | `boxery cp FROM TO` | Copy files and directories to, from and between VMs [→](copy.md) |
 | `boxery desktop NAME [--no-open]` | Open a VM's desktop in your browser (noVNC over ssh) [→](#desktop-and-ports) |
@@ -311,6 +319,8 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 ## `boxery-host` (the VM host)
 
 `boxery-host help` lists every command; `boxery-host COMMAND --help` shows one. Generated from the same help (`host/help.mjs`); edit it there, then `npm run docs:cli`. `--profile NAME` before any command runs it in a second profile on this host (`~/.config/boxery-NAME`: its own backend, state, proxy port and services); `--profile NAME init --backend B` creates it with a free proxy port. `upgrade` keeps the code and each profile's state from before in `$BOXERY_CONF/pre-upgrade/` after a success too.
+
+Commands in messages name what you typed. The follow-up commands `boxery` prints (`run --bg`'s logs and wait, `prompt`, `acquire`, `ls`) keep your `--host NAME`; and when `boxery` runs a host command for you, it passes `BOXERY_CLI` (`boxery`, or `boxery --host NAME` if you gave one), so a host error suggests `boxery --host lab snap-rm demo s1` rather than `boxery-host snap-rm demo s1`. Commands only boxery-host has (`init`, …) keep its name. Called directly, boxery-host names itself.
 
 <!-- BEGIN generated: boxery-host commands (npm run docs:cli) -->
 
@@ -442,7 +452,7 @@ VM sizes the host offers, after merging its `shapes.json` over the built-ins ([S
 
 #### `boxery grants NAME --json`
 
-Local grant records (names and paths only; values are never stored or printed).
+Local grant records (names and paths only; values are never stored or printed). With none recorded, the host is asked whether NAME exists: `[]` for a VM without grants, `no such vm: NAME` (exit 1) for one the host doesn't list. A host that can't be reached doesn't fail the listing.
 
 ```json
 [

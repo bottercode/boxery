@@ -28,7 +28,13 @@ boxery --host hornet grant demo ssh-agent
 boxery host rm hornet                # forget registration only
 ```
 
-Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and with no `--host` and no default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands operate on the registry, not the selected host, and cannot be combined with `--host`.
+Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and without an explicit host or a default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands operate on the registry, not the selected host, and cannot be combined with `--host`.
+
+For SSH, `boxery ssh demo@lab` is shorthand for `boxery --host lab ssh demo`.
+The suffix names a registered host, not an SSH destination, and does not change the
+default. `boxery ssh demo@lab hostname` runs a command there. If you also pass
+`--host`, it must match the suffix; conflicting selectors are rejected before any
+connection or grant reapplication. Other commands continue to use `--host NAME`.
 
 `host add NAME DEST [--key PUBKEY] [--host-bin PATH] [--backend B | --profile P]` never overwrites a registration or existing managed profile directory. DEST is `local` or an SSH destination/SSH-config alias (option-like destinations and shell syntax are rejected). HOST_BIN is **one executable path**, not a command expression. Quote `~/...` to leave it for the remote host; on `local`, it refers to the controller's home. Spaces and apostrophes are supported. Paths used in generated configuration cannot contain newlines, carriage returns or tabs. Setup checks the executable and registers the public key before publishing the profile. Without `--key` it uses `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`; else the key a registered host already uses (its `IDENTITY`, the default host's first); else the first other `~/.ssh/id_*.pub`. Past the usual names, a key counts only when its private half is next to it, and certificates (`-cert.pub`) and DSA keys are skipped; setup says which key it picked. Re-running setup for a host keeps the key its VMs already trust. The key is found before the host's slower checks (`init`, `capabilities --check`), and the error says what was tried. Failed checks do not select or register a partial profile. A remote key registration that has already succeeded cannot be rolled back if a subsequent local write fails. The first host registered becomes the default; later ones don't change it.
 
