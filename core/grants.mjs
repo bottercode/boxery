@@ -4,6 +4,7 @@ import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { q } from "./shell.mjs";
 import { currentHost, registeredHosts, deniedDirs, isWithin, REMOTE_HOME } from "./boxery-core.mjs";
+import { listGrants } from "./grant-operations.mjs";
 export { listGrants, addGrants, revokeGrants, applyGrants, grantsChanged, storedSpecs } from "./grant-operations.mjs";
 /** Agent requests have the same validation, but cannot supply commands or arbitrary HTTP grants.
  * @param {GrantRequestArgs} [a] @param {{localCwd?: string}} [opts]
@@ -104,6 +105,22 @@ export function grantPrompt(vm, host, g, reason = undefined) {
 	}[g.kind];
 	const why = String(reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
 	return [`Give ${where} access to:`, "", ...what, "", `Revoke any time: ${grantCommand("revoke", vm, host, g)}`, ...(why ? ["", `The agent's reason: "${why}"`] : [])].join("\n");
+}
+
+// pi providers that reach their LLM through the host proxy, by baseUrl (host/seed.mjs points openai-codex and ollama there).
+const PROXY_ROUTE = /^http:\/\/127\.0\.0\.1:8088\/(chatgpt|openai|anthropic|ollama)(?:\/|$)/;
+/** The llm: grant VM's pi needs for its configured provider and VM lacks (e.g. "llm:chatgpt"), or null: it has
+ *  the grant, or the provider doesn't go through the host proxy. The texts are the VM's pi files ("" when
+ *  missing); the project's settings win over the user's, as in pi.
+ *  @param {string} vm @param {{ settings?: string, projectSettings?: string, models?: string }} files */
+export function missingPiGrant(vm, { settings = "", projectSettings = "", models = "" }) {
+	const json = (/** @type {string} */ t) => { try { return JSON.parse(t) ?? {}; } catch { return {}; } };
+	const provider = json(projectSettings).defaultProvider ?? json(settings).defaultProvider;
+	if (typeof provider !== "string") return null;
+	const base = json(models).providers?.[provider]?.baseUrl;
+	const route = typeof base === "string" ? PROXY_ROUTE.exec(base)?.[1] : undefined;
+	if (!route || listGrants(vm).some((g) => g.kind === "llm" && g.provider === route)) return null;
+	return `llm:${route}`;
 }
 
 /** @param {"grant" | "revoke"} verb @param {string} vm @param {string} host @param {GrantSpec} g */

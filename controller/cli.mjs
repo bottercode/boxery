@@ -6,7 +6,7 @@
 import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOXERY_HOME, defaultHost, resolveHost, withHost } from "../core/boxery-core.mjs";
+import { BOXERY_HOME, defaultHost, hostBackend, resolveHost, withHost } from "../core/boxery-core.mjs";
 import * as lifecycle from "../core/lifecycle.mjs";
 import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
@@ -211,6 +211,7 @@ async function cmdPrompt(s, [name = "", ...words]) {
 	needVm(name);
 	const prompt = words.join(" ");
 	if (!prompt) usage("prompt");
+	await needPiGrant(s, name);
 	const d = new Date(), p2 = (/** @type {number} */ n) => String(n).padStart(2, "0");
 	const id = `task-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
 	const b64 = Buffer.from(prompt).toString("base64");
@@ -220,6 +221,18 @@ async function cmdPrompt(s, [name = "", ...words]) {
 		chmod +x $d/${id}.sh; tmux new-session -d -s ${id} -c ~/project $d/${id}.sh`;
 	await exitWith(vmSsh(s, [`${name}.boxery`, script]));
 	say(`started ${id} on ${name} — watch: boxery attach ${name} pi ${id}   log: boxery run ${name} cat project/.boxery/${id}.log`);
+}
+
+/** A VM has no LLM access until it is granted, and pi without it fails at once: say so before starting a
+ *  task, with the grant to ask for. (OpenShell provides LLM access itself.) @param {Selected} s @param {string} name */
+async function needPiGrant(s, name) {
+	if (hostBackend(s.host) === "openshell") return;
+	// pi's settings (the user's, then the project's) and its models, each ended by a \036.
+	const r = await vmSshCapture(s, [`${name}.boxery`, "for f in ~/.pi/agent/settings.json ~/project/.pi/settings.json ~/.pi/agent/models.json; do cat \"$f\" 2>/dev/null; printf '\\036'; done; true"]);
+	if (r.code) throw new CliError("", r.code); // (ssh said why)
+	const [settings, projectSettings, models] = r.stdout.split("\x1e");
+	const spec = (await import("../core/grants.mjs")).missingPiGrant(name, { settings, projectSettings, models });
+	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: boxery grant ${name} ${spec}`);
 }
 
 /** cp FROM TO: vm_copy's own code. Needs only the profile's ssh_config, not the host. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -465,7 +478,7 @@ export const COMMANDS = {
 		run: async (s, args) => { needHost(s); await cmdAttach(s, args); },
 	},
 	prompt: {
-		help: { group: "use", summary: "start a headless pi task in its own tmux session", usage: ['prompt NAME "TASK"'], details: ["It logs to ~/project/.boxery/task-*.log in the VM; attach with boxery attach NAME pi task-…"] },
+		help: { group: "use", summary: "start a headless pi task in its own tmux session", usage: ['prompt NAME "TASK"'], details: ["It logs to ~/project/.boxery/task-*.log in the VM; attach with boxery attach NAME pi task-…", "pi needs the llm: grant for its provider (llm:chatgpt by default); without it prompt starts nothing and says what to grant."] },
 		run: async (s, args) => { needHost(s); await cmdPrompt(s, args); },
 	},
 	sessions: {
