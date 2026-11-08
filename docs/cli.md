@@ -10,6 +10,8 @@
 
 `boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
 
+- [All commands](#all-commands), generated from the same help
+
 ### Named hosts
 
 ```bash
@@ -208,6 +210,101 @@ boxery version [--json]                      # controller + host versions; warns
 boxery backend                               # the host's VM backend; recorded for host ls / vm_info hosts
 boxery upgrade-host [--check] [--ref REF]    # update boxery on the host (see Install → Upgrading)
 ```
+
+### All commands
+
+Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it there, then `npm run docs:cli`. `--host NAME` before any command runs it on another host.
+
+<!-- BEGIN generated: boxery commands (npm run docs:cli) -->
+
+**Setup & hosts**
+
+| Command | What it does |
+|---|---|
+| `boxery setup user@host\|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]`<br>`boxery setup local --backend openshell [OPTIONS]` | Configure a VM host (local = this machine), register your ssh key [→](install.md) |
+| `boxery host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B \| --profile P]`<br>`boxery host add NAME --config-dir DIR`<br>`boxery host ls [--json]`<br>`boxery host show NAME`<br>`boxery host use NAME`<br>`boxery host rm NAME` | Manage named hosts (host use sets the default) [→](hosts.md) |
+| `boxery build-base` | Build the host's desktop base image (one time, ~3 min) [→](#lifecycle) |
+
+**VMs**
+
+| Command | What it does |
+|---|---|
+| `boxery ls [--json] [--refresh]` | List VMs with their shape, grants and guest software (also: `list`) [→](#lifecycle) |
+| `boxery new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless [--layers L,...]] [--grant SPEC]... [--agent-forward]`<br>`boxery new NAME --from VM@SNAP` | Create a VM [→](#lifecycle) |
+| `boxery start NAME` | Start a stopped VM (pins its ssh host key where it can) |
+| `boxery stop NAME` | Stop a VM |
+| `boxery rm NAME` | Destroy a VM and its snapshots (revokes its LLM token) |
+| `boxery resize NAME [--cpus N] [--mem MiB] [--disk GiB]` | Change a VM's size (restarts it if running; disk only grows) [→](#lifecycle) |
+| `boxery fork SRC DST... [--grants] [--shape S] [--cpus N --mem MiB --disk GiB]` | Copy a VM (running or not) into new VMs, ~10 s [→](#snapshots-and-forks) |
+| `boxery patch NAME\|--all [--wait S]` | Update a VM's guest software to the host's image layers [→](#lifecycle) |
+| `boxery pin NAME [--from-guest]` | Re-pin a VM's ssh host key (VMs made before keys were pinned) [→](security.md#vm-host-keys) |
+| `boxery shapes [--json]` | VM sizes defined on the host (* = default) [→](shapes.md) |
+
+**Snapshots & images**
+
+| Command | What it does |
+|---|---|
+| `boxery snap NAME [SNAP]` | Snapshot a VM's disk (~1 s; the VM keeps running) [→](#snapshots-and-forks) |
+| `boxery snaps NAME [--json]` | List a VM's snapshots |
+| `boxery revert NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) |
+| `boxery snap-rm NAME SNAP` | Delete a snapshot |
+| `boxery images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) |
+
+**Work in a VM**
+
+| Command | What it does |
+|---|---|
+| `boxery ssh NAME [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
+| `boxery run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]` | Run a command in ~/project, args as given (like docker exec) [→](#shell-and-in-vm-agents) |
+| `boxery cp FROM TO` | Copy files and directories to, from and between VMs [→](copy.md) |
+| `boxery desktop NAME [--no-open]` | Open a VM's desktop in your browser (noVNC over ssh) [→](#desktop-and-ports) |
+| `boxery forward NAME PORT [LOCAL_PORT]` | Forward a VM port to localhost |
+| `boxery attach NAME [pi\|opencode\|shell] [SESSION]` | Attach to an agent in a persistent tmux session |
+| `boxery prompt NAME "TASK"` | Start a headless pi task in its own tmux session |
+| `boxery sessions NAME [--json]` | List a VM's tmux sessions |
+
+**Background jobs**
+
+| Command | What it does |
+|---|---|
+| `boxery jobs NAME [--json]`<br>`boxery jobs NAME --prune [--older-than 7d] [--json]` | List background jobs (run --bg starts one) [→](#background-command-jobs) |
+| `boxery logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]` | Show a job's output (the last 200 lines) [→](#background-command-jobs) |
+| `boxery wait NAME JOB [--timeout S] [--json]` | Wait for a job; exits with its exit code [→](#background-command-jobs) |
+| `boxery kill NAME JOB [--grace S] [--json]` | Stop a job: SIGTERM its process group, then SIGKILL [→](#background-command-jobs) |
+
+**Access (grants)**
+
+| Command | What it does |
+|---|---|
+| `boxery grant NAME SPEC... [--cmd CMD]` | Give a VM access to something on this machine (asks first) [→](grants.md) |
+| `boxery revoke NAME SPEC...\|all` | Take access away (pushed values are deleted from the VM) [→](grants.md) |
+| `boxery grants NAME [apply [--quiet] \| --json]` | Show a VM's grants, or push them again (apply) [→](grants.md) |
+| `boxery agent-forward NAME on\|off` | Same as grant/revoke NAME ssh-agent |
+
+**Shared pool & runners**
+
+| Command | What it does |
+|---|---|
+| `boxery acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) [→](pool.md) |
+| `boxery renew NAME [--ttl S]` | Extend your lease [→](pool.md) |
+| `boxery release NAME` | Give a leased VM back (it is reset to its clean snapshot) [→](pool.md) |
+| `boxery leases [--json]` | Your leases [→](pool.md) |
+| `boxery pool add NAME`<br>`boxery pool rm NAME [--force]`<br>`boxery pool ls [--json]` | Manage the shared pool of leasable VMs (admin) [→](pool.md) |
+| `boxery runners once [--repo OWNER/REPO \| --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]`<br>`boxery runners status [--json] \| start \| stop \| token < FILE`<br>`boxery runners config [--repo OWNER/REPO \| --org ORG] [--vms NAME,...] [--count N] [--labels L,...] ...` | GitHub Actions runners on pool VMs [→](github-runners.md) |
+
+**Host & diagnostics**
+
+| Command | What it does |
+|---|---|
+| `boxery version [--json]` | Controller and host versions; warns when the host is behind |
+| `boxery upgrade-host [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services [→](install.md#upgrading) |
+| `boxery backends [--json]` | Backend support, requirements and capabilities [→](backends.md) |
+| `boxery capabilities [--json \| --check]` | The selected host's platform and capabilities [→](backends.md) |
+| `boxery backend` | The host's VM backend (recorded for host ls) |
+| `boxery proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host |
+| `boxery help [COMMAND]` | Show help for boxery or a command |
+
+<!-- END generated -->
 
 ## `boxery-host` (the VM host)
 
