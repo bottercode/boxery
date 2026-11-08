@@ -263,4 +263,59 @@ done
 : >"$PROFILE_LOG"
 "$CLI" setup user@fake --name epsilon --host-bin '~/bin/profiled' --backend exe >/dev/null
 grep -qx -- '--profile epsilon init --backend exe' "$PROFILE_LOG"
-echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures and remote quoting'
+# Default key (#220): ~/.ssh/id_{ed25519,ecdsa,rsa}.pub, else the key a registered host uses, else another
+# ~/.ssh/id_*.pub. It's found before the host's slower checks, and the error says what was tried.
+export BOXERY_HOME="$tmp/keys" HOME="$tmp/keys-home"
+mkdir -p "$HOME/.ssh" "$HOME/kid" "$HOME/kid2"
+keylog="$tmp/key-host.log"; keybin="$tmp/key-host"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\n[ "$1" != --profile ] || shift 2\ncase $1 in help) echo capabilities ;; add-key) cat >"%s.pub" ;; backend) [ -z "${KEY_BACKEND:-}" ] || echo "$KEY_BACKEND" ;; esac\n' "$keylog" "$keylog" >"$keybin"; chmod +x "$keybin"
+if out=$("$CLI" host add k0 local --host-bin "$keybin" 2>&1); then echo 'host add without any key succeeded' >&2; exit 1; fi
+printf '%s\n' "$out" | grep -qF 'no ssh public key found: tried ~/.ssh/id_ed25519.pub, id_ecdsa.pub and id_rsa.pub, the keys your registered hosts use, and other ~/.ssh/id_*.pub with their private key. Pass --key PATH.pub'
+if grep -q capabilities "$keylog"; then echo 'checked capabilities before finding a key' >&2; exit 1; fi
+[ ! -e "$BOXERY_HOME/host-registry/k0" ]
+# A new host-side profile: no init either before the key is found.
+if "$CLI" host add k0 local --host-bin "$keybin" --backend exe >/dev/null 2>&1; then echo 'host add --backend without any key succeeded' >&2; exit 1; fi
+if grep -q init "$keylog"; then echo 'ran init before finding a key' >&2; exit 1; fi
+if out=$("$CLI" host add k0 local --host-bin "$keybin" --key "$HOME/none.pub" 2>&1); then echo 'a missing --key was accepted' >&2; exit 1; fi
+printf '%s\n' "$out" | grep -qF "no such ssh public key: $HOME/none.pub"
+# OpenShell's gateway authenticates: no key needed.
+out=$(KEY_BACKEND=openshell "$CLI" host add shell local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -q 'no guest SSH key registration needed'
+grep -qx "IDENTITY=''" "$BOXERY_HOME/profiles/shell/config"
+rm -rf "$BOXERY_HOME" # (start again with no hosts)
+# The key a registered host already uses (IDENTITY as ssh_config reads it: ~/ is this machine's home), the
+# default host's first; only with its private half.
+printf 'ssh-ed25519 AAAAregistered\n' >"$HOME/kid/id_ed25519.pub"; : >"$HOME/kid/id_ed25519"
+printf 'ssh-ed25519 AAAAsecond\n' >"$HOME/kid2/id_ed25519.pub"; : >"$HOME/kid2/id_ed25519"
+for n in old other; do
+	mkdir -p "$tmp/keys-$n"; printf '#\n' >"$tmp/keys-$n/ssh_config"
+done
+printf "HOST='local'\nHOST_BIN='/bin/echo'\nIDENTITY='~/kid/id_ed25519'\n" >"$tmp/keys-old/config"
+printf "HOST='local'\nHOST_BIN='/bin/echo'\nIDENTITY='~/kid2/id_ed25519'\n" >"$tmp/keys-other/config"
+"$CLI" host add old --config-dir "$tmp/keys-old" >/dev/null # the default
+"$CLI" host add aaa --config-dir "$tmp/keys-other" >/dev/null
+out=$("$CLI" host add k1 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "no --key given: using $HOME/kid/id_ed25519.pub"
+grep -q AAAAregistered "$keylog.pub"; grep -qF "IDENTITY='$HOME/kid/id_ed25519'" "$BOXERY_HOME/profiles/k1/config"
+grep -q 'capabilities --check' "$keylog"
+"$CLI" host use aaa
+out=$("$CLI" host add k1b local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/kid2/id_ed25519.pub"
+# With no registered host to borrow from, another ~/.ssh/id_*.pub (what the help promises): not one without
+# its private key (someone else's), a certificate or a DSA key.
+export BOXERY_HOME="$tmp/keys2"
+printf 'ssh-ed25519 AAAAbob\n' >"$HOME/.ssh/id_bob.pub"
+printf 'ssh-dss AAAAdsa\n' >"$HOME/.ssh/id_dsa.pub"; : >"$HOME/.ssh/id_dsa"
+printf 'ssh-ed25519-cert-v01@openssh.com AAAAcert\n' >"$HOME/.ssh/id_ed25519_github-cert.pub"
+printf 'ssh-ed25519 AAAAgithub\n' >"$HOME/.ssh/id_ed25519_github.pub"; : >"$HOME/.ssh/id_ed25519_github"
+out=$("$CLI" host add k2 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_ed25519_github.pub"
+grep -q AAAAgithub "$keylog.pub"
+# The usual names come first; re-running setup keeps the key the host's VMs already trust.
+printf 'ssh-ed25519 AAAAusual\n' >"$HOME/.ssh/id_rsa.pub"
+out=$("$CLI" host add k3 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_rsa.pub"
+if printf '%s\n' "$out" | grep -q 'no --key given'; then echo 'noted a usual key' >&2; exit 1; fi
+out=$("$CLI" setup local --name k2 --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_ed25519_github.pub"
+echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures, remote quoting and default keys'
