@@ -351,6 +351,20 @@ test("prompt's pi check: only a provider routed through the host proxy needs its
 	assert.equal(grants.missingPiGrant("demo", { settings: settings("openai-codex"), models }), "llm:chatgpt", "another provider's grant doesn't count");
 	writeFileSync(store, "llm\tchatgpt\t\n");
 	assert.equal(grants.missingPiGrant("demo", { settings: settings("openai-codex"), models }), null);
+	rmSync(store);
+});
+
+test("prompt's pi check knows every proxy route the host seeds into pi, and every llm: provider", async () => {
+	const { piModels } = await import("../host/seed.mjs");
+	const seeded = /** @type {Record<string, { baseUrl: string }>} */ (piModels("vm:secret", [{ id: "m" }]).providers);
+	assert.deepEqual(Object.keys(seeded).sort(), ["ollama", "openai-codex"]);
+	for (const p of Object.keys(seeded))
+		assert.match(grants.missingPiGrant("demo", { settings: JSON.stringify({ defaultProvider: p }), models: JSON.stringify({ providers: seeded }) }) ?? "", /^llm:(chatgpt|ollama)$/, p);
+	for (const provider of grants.LLM_PROVIDERS) {
+		assert.equal(grants.parseGrantSpec({ spec: `llm:${provider}` }).provider, provider);
+		const models = JSON.stringify({ providers: { p: { baseUrl: `http://127.0.0.1:8088/${provider}/v1` } } });
+		assert.equal(grants.missingPiGrant("demo", { settings: JSON.stringify({ defaultProvider: "p" }), models }), `llm:${provider}`);
+	}
 });
 
 test("all grant kinds use the same prompt formatter and validation on both front-ends", () => {

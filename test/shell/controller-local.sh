@@ -24,6 +24,7 @@ case "\$*" in *cloud-init*|*6080*|*boxery-provision*) exit 0 ;; esac
 [ -n "\$host" ] || exit 0
 vm=$tmp/vms/\$host; [ -d "\$vm" ] || { echo "no such vm" >&2; exit 255; }
 mkdir -p "\$vm/home/project/.git/info"
+[ ! -f "\$vm/login-output" ] || cat "\$vm/login-output" # what a chatty login script prints first
 cd "\$vm/home" && HOME="\$vm/home" exec bash -c "\${*:-true}"
 STUB
 chmod +x "$tmp/bin/ssh"; export PATH="$tmp/bin:$PATH"
@@ -120,6 +121,10 @@ printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/tmux"
 if out=$("$A" prompt w1 say hi 2>&1); then bad "prompt without an llm grant started: $out"
 elif [[ $out == *"needs llm:chatgpt"*"boxery grant w1 llm:chatgpt"* ]] && ! ls "$tmp/vms/w1/home/project/.boxery/"task-* >/dev/null 2>&1; then ok "prompt without pi's llm grant: refused, with the grant to run"
 else bad "prompt without a grant: $out"; fi
+# (a login script that prints something first doesn't hide pi's settings)
+echo "welcome to the VM" >"$tmp/vms/w1/login-output"
+if out=$("$A" prompt w1 say hi 2>&1) || [[ $out != *"needs llm:chatgpt"* ]]; then bad "prompt check with a chatty login: $out"; else ok "prompt's check reads pi's settings after a login script's output"; fi
+rm "$tmp/vms/w1/login-output"
 "$A" grant w1 llm:chatgpt >/dev/null 2>&1
 out=$("$A" prompt w1 say hi 2>&1) && [[ $out == *"started task-"* ]] && ok "prompt with pi's llm grant starts the task" || bad "prompt with the grant: $out"
 "$A" revoke w1 llm:chatgpt >/dev/null 2>&1

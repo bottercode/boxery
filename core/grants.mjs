@@ -11,6 +11,8 @@ export { listGrants, addGrants, revokeGrants, applyGrants, grantsChanged, stored
  */
 export function parseGrantRequest(a, opts) { return parseGrantSpec(a, opts); }
 /** @import { GrantSpec, GrantRequestArgs } from "./boxery-core.mjs" */
+/** The host proxy's LLM routes, which llm: grants name. */
+export const LLM_PROVIDERS = ["chatgpt", "openai", "anthropic", "ollama"];
 const quoteWord = (/** @type {string} */ s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : q(s));
 /** Is real path `p` inside `dir`? `dir` is resolved too (macOS: /var → /private/var). */
 const underDir = (/** @type {string} */ p, /** @type {string} */ dir) => {
@@ -49,7 +51,7 @@ export function parseGrantSpec({ spec, readonly, cmd, auth } = {}, { localCwd, c
 		if (!cmd) throw new Error(`${s} needs --cmd CMD`);
 		return { kind: "http", spec: s, host, cmd, auth: a, readonly: !!readonly };
 	}
-	const llm = /^llm:(chatgpt|openai|anthropic|ollama)$/.exec(s);
+	const llm = new RegExp(`^llm:(${LLM_PROVIDERS.join("|")})$`).exec(s);
 	if (llm) return { kind: "llm", spec: s, provider: llm[1] };
 	if (s.startsWith("llm:")) throw new Error(`unknown LLM provider "${s.slice(4)}" (llm:chatgpt, llm:openai, llm:anthropic or llm:ollama)`);
 	const env = /^env:([A-Za-z_][A-Za-z0-9_]*)$/.exec(s);
@@ -107,8 +109,9 @@ export function grantPrompt(vm, host, g, reason = undefined) {
 	return [`Give ${where} access to:`, "", ...what, "", `Revoke any time: ${grantCommand("revoke", vm, host, g)}`, ...(why ? ["", `The agent's reason: "${why}"`] : [])].join("\n");
 }
 
-// pi providers that reach their LLM through the host proxy, by baseUrl (host/seed.mjs points openai-codex and ollama there).
-const PROXY_ROUTE = /^http:\/\/127\.0\.0\.1:8088\/(chatgpt|openai|anthropic|ollama)(?:\/|$)/;
+// pi providers that reach their LLM through the host proxy, by baseUrl: the guest's proxy address (host/seed.mjs
+// PROXY, which points openai-codex and ollama there; test/grants.test.mjs keeps the two in step) and a route.
+const PROXY_ROUTE = new RegExp(`^http://127\\.0\\.0\\.1:8088/(${LLM_PROVIDERS.join("|")})(?:/|$)`);
 /** The llm: grant VM's pi needs for its configured provider and VM lacks (e.g. "llm:chatgpt"), or null: it has
  *  the grant, or the provider doesn't go through the host proxy. The texts are the VM's pi files ("" when
  *  missing); the project's settings win over the user's, as in pi.

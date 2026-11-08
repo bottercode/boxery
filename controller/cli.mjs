@@ -227,10 +227,11 @@ async function cmdPrompt(s, [name = "", ...words]) {
  *  task, with the grant to ask for. (OpenShell provides LLM access itself.) @param {Selected} s @param {string} name */
 async function needPiGrant(s, name) {
 	if (hostBackend(s.host) === "openshell") return;
-	// pi's settings (the user's, then the project's) and its models, each ended by a \036.
-	const r = await vmSshCapture(s, [`${name}.boxery`, "for f in ~/.pi/agent/settings.json ~/project/.pi/settings.json ~/.pi/agent/models.json; do cat \"$f\" 2>/dev/null; printf '\\036'; done; true"]);
+	// pi's settings (the user's, then the project's) and its models, each after a \036: whatever a login
+	// script prints first is before them.
+	const r = await vmSshCapture(s, [`${name}.boxery`, "for f in ~/.pi/agent/settings.json ~/project/.pi/settings.json ~/.pi/agent/models.json; do printf '\\036'; cat \"$f\" 2>/dev/null; done; true"]);
 	if (r.code) throw new CliError("", r.code); // (ssh said why)
-	const [settings, projectSettings, models] = r.stdout.split("\x1e");
+	const [settings, projectSettings, models] = r.stdout.split("\x1e").slice(-3);
 	const spec = (await import("../core/grants.mjs")).missingPiGrant(name, { settings, projectSettings, models });
 	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: boxery grant ${name} ${spec}`);
 }
