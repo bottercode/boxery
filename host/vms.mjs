@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { DEFAULT_OS } from "../guests/index.mjs";
 import * as linux from "../guests/linux.mjs";
-import { deleteBuildRecord, refreshBuild } from "./build-info.mjs";
+import { buildRecord, deleteBuildRecord, guestChecker, refreshBuild } from "./build-info.mjs";
 import { captureVm, cleanupVmImages } from "./images.mjs";
 import { deleteHostKey } from "./hostkeys.mjs";
 import { issueToken, writeSeed } from "./seed.mjs";
@@ -11,6 +11,7 @@ import { shapeSize } from "./shapes.mjs";
 import { fail, hint, log, print, sleep, stamp, validImage, validName, validNum } from "./util.mjs";
 import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } from "./vm-records.mjs";
 import { hostUsage } from "./help.mjs";
+/** @import { BuildRecord } from "./build-info.mjs" */
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 /** @import { ShapeInput } from "./shapes.mjs" */
@@ -18,8 +19,9 @@ import { hostUsage } from "./help.mjs";
 
 /** Parsed `new` arguments; sizes are the flags' strings ("" = unset). layers: optional layers on top of
  *  plumbing + devtools (headless only). sameAs (fork, not a flag): the shape name to record although the
- *  size is given by flags, which copy that shape's size exactly.
- *  @typedef {{ name: string, shape: string, cpus: string, mem: string, disk: string, from: string, headless: boolean, layers?: string[], sameAs?: string }} NewArgs */
+ *  size is given by flags, which copy that shape's size exactly. forked (fork, not a flag): fork warns
+ *  about outdated guest software once, for all its copies.
+ *  @typedef {{ name: string, shape: string, cpus: string, mem: string, disk: string, from: string, headless: boolean, layers?: string[], sameAs?: string, forked?: boolean }} NewArgs */
 // Layers a headless VM may add with --layers (image/layers/; the base layers are always there).
 export const OPTIONAL_LAYERS = ["github-runner"];
 /** @typedef {{ cpus: string, mem: string, disk: string }} SizeFlags */
@@ -44,6 +46,24 @@ export async function restorePetAccess(rt, name) {
 /** @param {Runtime} rt @param {GuestEndpoint} ep @param {string} command */
 async function mustRun(rt, ep, command) {
 	if (await rt.guest.run(ep, command) !== 0) fail(`ssh to ${ep.host}:${ep.port} failed`);
+}
+
+const BOOT_ID = "cat /proc/sys/kernel/random/boot_id";
+/** Restart NAME if its updates ask for it, and wait until it is back (a new boot id). @param {Runtime} rt @param {string} name @param {GuestEndpoint} ep */
+export async function rebootIfRequired(rt, name, ep) {
+	if (await rt.guest.run(ep, "test -e /var/run/reboot-required", { quiet: true }) !== 0) return false;
+	const boot = (await rt.guest.output(ep, BOOT_ID)).out.trim();
+	log(`${name}: restarting it (the updates ask for it: /var/run/reboot-required)`);
+	await rt.guest.run(ep, "sudo systemctl reboot", { quiet: true }); // the connection may drop
+	const tries = Number(rt.env.BOXERY_SSH_WAIT_TRIES || 180);
+	for (let i = 0; i < tries; i++) {
+		await sleep(2000);
+		try {
+			const now = await rt.guest.output(await rt.vms.sshEndpoint(name, { quiet: true }), BOOT_ID);
+			if (now.code === 0 && now.out.trim() && now.out.trim() !== boot) return true;
+		} catch { /* not back yet */ }
+	}
+	return fail(`${name} did not come back after restarting (${hint("ls")}; ${hint(`start ${name}`)})`);
 }
 
 // ---------------------------------------------------------------- new
@@ -87,7 +107,7 @@ async function sizeGot(rt, name, want) {
 }
 
 /** Create, boot and wait for NAME. Returns "NAME HOST:PORT". @param {Runtime} rt @param {NewArgs} args */
-export async function createVm(rt, { name, shape, cpus, mem, disk, from, headless, layers = [], sameAs }) {
+export async function createVm(rt, { name, shape, cpus, mem, disk, from, headless, layers = [], sameAs, forked = false }) {
 	validName(name);
 	if (rt.backend === "openshell") {
 		if (!headless || from) fail("OpenShell supports only new --headless without --from; no desktop, snapshots, forks or pools");
@@ -131,7 +151,7 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 	const userdata = rt.backend === "openshell" ? "" : await step("seed", () => writeSeed(rt, name, provision));
 	await step("backend-new", () => rt.vms.call("backend_new", [name, cpus, mem, disk, userdata, src]));
 	createVmRecord(rt.db(), name, { kind, os, size: rt.backend === "openshell" ? null : await step("size", () => sizeGot(rt, name, { shape: label, cpus, mem, disk })) });
-	const ep = await step("endpoint", () => rt.vms.waitEndpoint(name));
+	let ep = await step("endpoint", () => rt.vms.waitEndpoint(name));
 	log(rt.backend === "openshell" ? `${name}: waiting for restricted gateway SSH` : `${name} reachable at ${ep.host}:${ep.port}; waiting for ssh + cloud-init${provision ? ` (installing ${provision})` : ""}`);
 	await step("ssh", () => rt.waitSsh(name, ep));
 	if (rt.backend === "openshell") {
@@ -156,10 +176,27 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 		await rt.guest.run(ep, `rm -rf "${linux.grantsDir}"`);
 	}
 	if (kind === "desktop" && await step("desktop", () => rt.guest.run(ep, NOVNC)) !== 0) log("warning: noVNC not answering yet");
-	await refreshBuild(rt, name, ep); // what it was built with (from an image or fork: its source's software)
+	// The stock image's first-boot updates may want a reboot (a new kernel): do it now, so a new headless VM
+	// starts current instead of an outdated guest (#215). A desktop or image VM's disk was updated before.
+	let built = await refreshBuild(rt, name, ep); // what it was built with (from an image or fork: its source's software)
+	if (provision && built?.reboot_required && await step("reboot", () => rebootIfRequired(rt, name, ep))) {
+		ep = await rt.vms.sshEndpoint(name, { quiet: true });
+		built = await refreshBuild(rt, name, ep);
+	}
 	rt.done(action);
 	log(`${name} ready (${kind}, ${secs()}s)`);
+	if (!forked) warnOutdated(rt, name, built, kind === "desktop" && !from ? "the desktop base" : from);
 	return `${name} ${ep.host}:${ep.port}`;
+}
+
+/** Say when VM NAME is an outdated guest the moment it exists, because SOURCE (its image, or "the desktop
+ *  base") is, and what to do (#215). @param {Runtime} rt @param {string} name @param {BuildRecord | null} rec
+ *  @param {string} source */
+function warnOutdated(rt, name, rec, source) {
+	const { status, reasons } = guestChecker(rt)(rec, { image: true }); // what it was built with; a reboot is the guest's own
+	if (status !== "outdated" || !source) return;
+	const fix = source === "the desktop base" ? "; to make new desktop VMs current, rebuild the base (boxery build-base) once no VM depends on it" : "";
+	log(`warning: ${name} is an outdated guest (${reasons.join(", ")}), as ${source} is; update it with: boxery patch ${name}${fix}`);
 }
 
 /** @param {Runtime} rt @param {string[]} args */
@@ -215,7 +252,7 @@ export async function fork(rt, args) {
 	log(`captured ${src} in ${secs()}s; booting ${dsts.length} fork(s)`);
 	// Boot the forks in parallel under this operation's locks; print results in argument order. A failed
 	// fork leaves its create intent behind, so the supervisor removes it after this worker exits.
-	const results = await Promise.allSettled(dsts.map((d) => createVm(rt, { ...parseNewArgs([d, ...sizing, ...flags, "--from", image]), ...(label ? { sameAs: label } : {}) })));
+	const results = await Promise.allSettled(dsts.map((d) => createVm(rt, { ...parseNewArgs([d, ...sizing, ...flags, "--from", image]), ...(label ? { sameAs: label } : {}), forked: true })));
 	let rc = 0;
 	results.forEach((r, i) => {
 		if (r.status === "fulfilled") {
@@ -227,6 +264,9 @@ export async function fork(rt, args) {
 		}
 	});
 	await rt.vms.call("backend_image_rm", [image]);
+	// Once for all the forks, naming SRC: patching it first gives current forks (#215).
+	const { status, reasons } = guestChecker(rt)(buildRecord(rt.conf, image), { image: true });
+	if (status === "outdated" && results.some((r) => r.status === "fulfilled")) log(`warning: ${src} is an outdated guest (${reasons.join(", ")}), and so are its forks; update them with: boxery patch NAME (patch ${src} first to fork current copies)`);
 	deleteBuildRecord(rt.conf, image);
 	rt.done(cleanup);
 	log(`forked ${src} → ${dsts.join(" ")} in ${secs()}s`);
