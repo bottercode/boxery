@@ -548,7 +548,7 @@ export const COMMANDS = {
 				"Refuses, changing nothing, when the VM checkout has changes the last sync didn't make, or the checkout holds a credential file (.env, .npmrc, auth files).",
 			],
 			flags: [["--from DIR", "Local checkout (default: the current directory)"], ["--to PATH", "VM directory (default ~/project; relative paths are under it)"], ["--json", "Print the result as JSON"]],
-			examples: [["This checkout into demo's ~/project", "boxery sync demo"], ["Another checkout, into ~/project/api", "boxery sync demo --from ../api --to api"]],
+			examples: [["This checkout into demo's ~/project", "boxery sync demo"], ["Another checkout, into ~/api (not inside ~/project, which is a checkout itself)", "boxery sync demo --from ../api --to ~/api"]],
 			seeAlso: ["cp"], docs: "sync.md",
 		},
 		run: cmdSync,

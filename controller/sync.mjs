@@ -12,8 +12,12 @@ export async function sync(host, vm, { from, to, json = false }) {
 	// Ctrl-C cancels like an MCP cancellation: before the VM applies anything, nothing changes there.
 	const abort = new AbortController();
 	let interrupted = 0;
-	const handlers = /** @type {const} */ (["SIGINT", "SIGTERM", "SIGHUP"]).map((sig) => /** @type {[NodeJS.Signals, () => void]} */ ([sig, () => { interrupted = 128 + constants.signals[sig]; abort.abort(); }]));
-	for (const [sig, h] of handlers) process.once(sig, h);
+	// Once the VM has started applying, the sync finishes (or rolls back) there regardless; wait for its result.
+	const handlers = /** @type {const} */ (["SIGINT", "SIGTERM", "SIGHUP"]).map((sig) => /** @type {[NodeJS.Signals, () => void]} */ ([sig, () => {
+		if (!interrupted) process.stderr.write("boxery: stopping; if the VM is already applying the sync, it finishes or rolls back first\n");
+		interrupted = 128 + constants.signals[sig]; abort.abort();
+	}]));
+	for (const [sig, h] of handlers) process.on(sig, h);
 	const tool = /** @type {Tool} */ (TOOLS.find((t) => t.name === "vm_sync"));
 	try {
 		const r = await core.withHost(host, () => tool.run(vm, { from, to }, /** @type {any} */ ({ localCwd: process.cwd(), signal: abort.signal }) /* no session: vm_sync needs none */));

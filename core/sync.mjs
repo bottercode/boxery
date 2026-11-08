@@ -26,28 +26,41 @@ export const SYNC_DISABLED =
 export const LOCKFILES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock"];
 
 // Credentials vm_sync never puts on a VM's disk (and so into its snapshots): the agent asks with vm_grant instead.
-// Templates (.env.example, .env.sample, .env.template) hold no values and are allowed.
-const DENY_NAME = /^(\.env(?!\.(example|sample|template)$)(\..*|rc)?|\.npmrc|\.pypirc|\.netrc|_netrc|\.git-credentials|\.pgpass|\.dockercfg|\.s3cfg|\.boto|auth\.json|credentials(\.json)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?)$/;
-const DENY_PATH = /(^|\/)(\.docker\/config\.json|\.kube\/config|gh\/hosts\.yml)$/;
+// Case-insensitive. Templates (.env.example, .env.sample, .env.template, .env.dist) hold no values and are allowed.
+const ENV_TEMPLATE = /^\.env[._-](example|sample|template|dist|defaults)$/i;
+const DENY_NAME = new RegExp("^(" + [
+	"\\.env([._-].*|rc)?", "\\.npmrc", "\\.yarnrc\\.yml", "\\.pypirc", "\\.netrc", "_netrc", "\\.git-credentials", "\\.pgpass", "\\.my\\.cnf",
+	"\\.dockercfg", "\\.s3cfg", "\\.boto", "\\.terraformrc", "auth\\.json", "credentials(\\.json)?", "application_default_credentials\\.json",
+	"id_[a-z0-9_-]+", ".*\\.(pem|key|p12|pfx|jks|keystore)",
+].join("|") + ")$", "i");
+const DENY_PATH = /(^|\/)(\.docker\/config\.json|\.kube\/config|gh\/hosts\.yml|\.aws\/config)$/i;
 /** Is a repository path a credential file vm_sync refuses? @param {string} p */
-export const deniedSyncPath = (p) => DENY_NAME.test(path.posix.basename(p)) || DENY_PATH.test(p);
+export function deniedSyncPath(p) {
+	const name = path.posix.basename(p);
+	if (ENV_TEMPLATE.test(name) || /\.pub$/i.test(name)) return false;
+	return DENY_NAME.test(name) || DENY_PATH.test(p);
+}
 
 const IDENTITY = { GIT_AUTHOR_NAME: "boxery sync", GIT_AUTHOR_EMAIL: "sync@boxery.invalid", GIT_AUTHOR_DATE: "@0 +0000" };
 const COMMITTER = { GIT_COMMITTER_NAME: IDENTITY.GIT_AUTHOR_NAME, GIT_COMMITTER_EMAIL: IDENTITY.GIT_AUTHOR_EMAIL, GIT_COMMITTER_DATE: IDENTITY.GIT_AUTHOR_DATE };
 // Repository-locating variables from the caller's environment would point git elsewhere.
 const GIT_LOCATION = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE"];
+// No lazy fetches from a partial clone's promisor remote: vm_sync never contacts a remote.
 const baseEnv = () => {
 	/** @type {NodeJS.ProcessEnv} */
-	const env = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" };
+	const env = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" };
 	for (const k of GIT_LOCATION) delete env[k];
 	return env;
 };
+// A confined server (HTTP MCP with --copy-root) reads a checkout an agent may have written: git must not
+// run anything that checkout's config names (fsmonitor, hooks, filter drivers) or look outside the root.
+const SAFE_CONFIG = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"];
 const aborted = () => Object.assign(new Error("sync aborted; the VM was not changed"), { name: "AbortError" });
 
 /** Run git locally → stdout. @param {string[]} args @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [opts] @returns {Promise<string>} */
 function git(args, { cwd, env = baseEnv() } = {}) {
 	return new Promise((resolve, reject) => {
-		execFile("git", args, { cwd, env, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
+		execFile("git", [...SAFE_CONFIG, ...args], { cwd, env, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
 			if (!error) return resolve(stdout);
 			const e = /** @type {NodeJS.ErrnoException} */ (error);
 			reject(new Error(e.code === "ENOENT" ? "git is not installed on this machine" : `git ${args[0]}: ${stderr.trim() || e.message}`));
@@ -74,7 +87,8 @@ function parseLines(out) {
 async function guest(vm, vars) {
 	const assignments = Object.entries(vars).map(([k, v]) => `${k}=${q(v)}`).join("\n");
 	// No signal: probe is short, and apply must finish or roll back once started (it ignores signals itself).
-	const r = await sshRun(vm, `${assignments}\n${guestTemplate}`);
+	// Detached: a terminal's Ctrl-C reaches the whole foreground group; ssh must survive it to report the result.
+	const r = await sshRun(vm, `${assignments}\n${guestTemplate}`, { detached: true });
 	const err = r.stderr.trim();
 	if (r.code === 3) throw new Error(`vm_sync refused: ${err}; nothing in the VM was changed`);
 	if (r.code !== 0) {
@@ -85,39 +99,72 @@ async function guest(vm, vars) {
 }
 
 /**
+ * Confined (--copy-root): the repository's root, git directory, common directory, object store and its
+ * alternates must all be inside the root and clear of denied directories, and its config must name no
+ * filter driver (git add would run it). Checked before git reads the working tree.
+ * @param {string} from @param {ReturnType<typeof confineLocal>} confined @param {NodeJS.ProcessEnv} env
+ */
+async function checkConfinedRepo(from, confined, env) {
+	const out = await tryGit(["rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir", "--git-common-dir", "--git-path", "objects"], { cwd: from, env });
+	if (!out) return;
+	const dirs = out.split("\n").filter(Boolean);
+	const objects = dirs[dirs.length - 1];
+	let alternates = "";
+	try { alternates = readFileSync(path.join(objects, "info", "alternates"), "utf8"); } catch {}
+	for (const a of alternates.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))) dirs.push(path.resolve(objects, a));
+	for (const d of dirs) {
+		let real;
+		try { real = await realpath(d); } catch { continue; }
+		confined.check(real, `${from} (its repository uses ${d})`);
+	}
+	const filters = await tryGit(["config", "--get-regexp", "^filter\\..*\\.(clean|smudge|process)$"], { cwd: from, env });
+	if (filters) throw new Error(`vm_sync refused: the repository at ${from} configures a git filter driver (${filters.split("\n")[0]}), which this server won't run`);
+}
+
+/**
  * The local checkout: repository root, HEAD, and a snapshot commit of HEAD plus every working change
  * (staged, unstaged, untracked but not ignored), built without changing the repository.
- * @param {string} from @param {string} scratch
+ * @param {string} from @param {string} scratch @param {ReturnType<typeof confineLocal> | null} confined
  */
-async function snapshot(from, scratch) {
-	const top = await tryGit(["rev-parse", "--show-toplevel"], { cwd: from });
+async function snapshot(from, scratch, confined) {
+	const env0 = baseEnv();
+	if (confined) {
+		// Don't discover a repository above the root.
+		env0.GIT_CEILING_DIRECTORIES = path.dirname(confined.root);
+		await checkConfinedRepo(from, confined, env0);
+	}
+	const g0 = { env: env0 };
+	const top = await tryGit(["rev-parse", "--show-toplevel"], { cwd: from, ...g0 });
 	if (!top) {
-		const bare = await tryGit(["rev-parse", "--is-bare-repository"], { cwd: from });
+		const bare = await tryGit(["rev-parse", "--is-bare-repository"], { cwd: from, ...g0 });
 		if (bare === "true") throw new Error(`${from} is a bare git repository; vm_sync pushes a checkout with a working tree`);
 		throw new Error(`${from} is not a git checkout (no repository found there or above it). vm_sync pushes a git checkout; use vm_copy for other files.`);
 	}
 	const root = await realpath(top);
-	const head = await tryGit(["rev-parse", "-q", "--verify", "HEAD^{commit}"], { cwd: root });
+	confined?.check(root);
+	const head = await tryGit(["rev-parse", "-q", "--verify", "HEAD^{commit}"], { cwd: root, ...g0 });
 	if (!head) throw new Error(`${root} has no commits yet; commit once before syncing (vm_sync needs a HEAD to check out)`);
-	const format = (await git(["rev-parse", "--show-object-format"], { cwd: root })).trim();
-	const objects = (await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: root })).trim();
-	const index = (await git(["rev-parse", "--path-format=absolute", "--git-path", "index"], { cwd: root })).trim();
+	if (await tryGit(["rev-parse", "--is-shallow-repository"], { cwd: root, ...g0 }) === "true")
+		throw new Error(`${root} is a shallow clone; vm_sync sends history the VM lacks and can't from a shallow one. Run git fetch --unshallow first`);
+	const format = (await git(["rev-parse", "--show-object-format"], { cwd: root, ...g0 })).trim();
+	const objects = (await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: root, ...g0 })).trim();
+	const index = (await git(["rev-parse", "--path-format=absolute", "--git-path", "index"], { cwd: root, ...g0 })).trim();
 	const scratchObjects = path.join(scratch, "objects");
 	await mkdir(scratchObjects);
 	const scratchIndex = path.join(scratch, "index");
 	let haveIndex = true;
 	try { await writeFile(scratchIndex, readFileSync(index)); } catch (e) { if (/** @type {any} */ (e).code !== "ENOENT") throw e; haveIndex = false; }
-	const env = { ...baseEnv(), GIT_INDEX_FILE: scratchIndex, GIT_OBJECT_DIRECTORY: scratchObjects, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
+	const env = { ...env0, GIT_INDEX_FILE: scratchIndex, GIT_OBJECT_DIRECTORY: scratchObjects, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
 	if (!haveIndex) await git(["read-tree", "HEAD"], { cwd: root, env });
 	await git(["add", "-A"], { cwd: root, env });
 	const tree = (await git(["write-tree"], { cwd: root, env })).trim();
-	const headTree = (await git(["rev-parse", "HEAD^{tree}"], { cwd: root })).trim();
+	const headTree = (await git(["rev-parse", "HEAD^{tree}"], { cwd: root, ...g0 })).trim();
 	// Deterministic (fixed identity and date), so the same working changes give the same commit every time.
 	const snap = tree === headTree ? head
 		: (await git(["commit-tree", tree, "-p", head, "-m", "boxery sync: working changes"], { cwd: root, env: { ...env, ...IDENTITY, ...COMMITTER } })).trim();
 	const counts = { modified: 0, untracked: 0, deleted: 0 };
 	if (tree !== headTree) {
-		const tracked = new Set((await git(["ls-files", "-z"], { cwd: root })).split("\0"));
+		const tracked = new Set((await git(["ls-files", "-z"], { cwd: root, ...g0 })).split("\0"));
 		const fields = (await git(["diff-tree", "-r", "-z", "-M", "--name-status", headTree, tree], { cwd: root, env })).split("\0").filter(Boolean);
 		for (let i = 0; i < fields.length;) {
 			const status = fields[i++];
@@ -128,7 +175,7 @@ async function snapshot(from, scratch) {
 		}
 	}
 	const files = (await git(["ls-tree", "-r", "-z", "--name-only", tree], { cwd: root, env })).split("\0").filter(Boolean);
-	return { root, head, format, objects, scratchObjects, env, tree, snap, counts, files };
+	return { root, head, format, objects, scratchObjects, env, tree, snap, counts, files, headTree };
 }
 
 /**
@@ -140,7 +187,7 @@ function refuseCredentials(root, files, deny) {
 	const named = files.filter(deniedSyncPath);
 	if (named.length)
 		throw new Error(`vm_sync refused: ${named.slice(0, 5).join(", ")}${named.length > 5 ? ` (+${named.length - 5} more)` : ""} in ${root} looks like a credential file, which vm_sync never puts on a VM's disk (it would persist in its snapshots). ` +
-			"Ignore it in .gitignore (or remove it) to sync the rest, and ask for the credential with vm_grant. Nothing in the VM was changed.");
+			"Ignore it in .gitignore (or remove it, and git rm it if tracked) to sync the rest, and ask for the credential with vm_grant. Nothing in the VM was changed.");
 	for (const { dir } of deniedDirs(deny)) {
 		if (isWithin(root, dir)) throw new Error(`vm_sync refused: ${root} is inside ${dir} (boxery's own configuration or the user's keys), which vm_sync never copies; use vm_grant for credentials`);
 		if (!isWithin(dir, root)) continue;
@@ -166,6 +213,12 @@ async function bundle(s, probe, scratch, id) {
 	const have = [];
 	for (const c of new Set([probe.synced, probe.base, probe.head].filter(Boolean)))
 		if (await tryGit(["--git-dir", bare, "cat-file", "-e", `${c}^{commit}`], { env }) !== null) have.push(`^${c}`);
+	// The bundle carries every commit the VM lacks, not just the snapshot: refuse a credential anywhere in them.
+	const history = (await git(["--git-dir", bare, "log", "--format=", "--name-only", "--no-renames", "-z", "refs/heads/sync", ...have], { env })).split("\0").map((p) => p.trim()).filter(Boolean);
+	const leaked = [...new Set(history.filter(deniedSyncPath))];
+	if (leaked.length)
+		throw new Error(`vm_sync refused: ${leaked.slice(0, 5).join(", ")} is in the history this sync would send (a commit the VM lacks has it), and vm_sync never puts credential files on a VM's disk. ` +
+			"It's not in your working tree, but its old contents are in that commit. Remove it from history (git rebase / git filter-repo) before syncing, and ask for the credential with vm_grant. Nothing in the VM was changed.");
 	const file = path.join(scratch, "out", `sync-${id}.bundle`);
 	await mkdir(path.dirname(file));
 	try {
@@ -201,8 +254,7 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 	const remoteBundle = `${REMOTE_HOME}/.cache/boxery/sync-${id}.bundle`;
 	let sent = false;
 	try {
-		const s = await snapshot(fromPath, scratch);
-		confined?.check(s.root);
+		const s = await snapshot(fromPath, scratch, confined);
 		refuseCredentials(s.root, s.files, local ? local.deny : undefined);
 		if (signal?.aborted) throw aborted();
 		const probe = await guest(vm, { MODE: "probe", DIR: dest, WANT: s.snap });
@@ -224,7 +276,7 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 		// The last point to stop: past here the VM applies the snapshot completely or not at all.
 		if (signal?.aborted) throw aborted();
 		const applied = await guest(vm, {
-			MODE: "apply", DIR: dest, FORMAT: s.format, BUNDLE: file ? remoteBundle : "", SNAP: s.snap, HEAD_SHA: s.head,
+			MODE: "apply", DIR: dest, FORMAT: s.format, BUNDLE: file ? remoteBundle : "", SNAP: s.snap, HEAD_SHA: s.head, TREE: s.tree,
 			EXPECT_SYNCED: probe.synced ?? "", EXPECT_HEAD: probe.head ?? "",
 		});
 		sent = false; // apply removed the bundle

@@ -202,7 +202,9 @@ test("deny-listed files block the sync, naming the path and vm_grant", async () 
 test("the deny list", () => {
 	for (const p of [".env", ".env.local", "a/.env.production", ".envrc", ".npmrc", "x/.pypirc", ".netrc", ".git-credentials", "auth.json", ".docker/config.json", "home/.kube/config", "credentials", "id_ed25519"])
 		assert.ok(deniedSyncPath(p), p);
-	for (const p of [".env.example", ".env.sample", "environment.ts", "src/auth.js", "npmrc.md", "docs/credentials.md", "id_ed25519.pub"])
+	for (const p of [".ENV", ".env-prod", ".env_local", "ID_RSA", "id_rsa_work", "Credentials.json", ".yarnrc.yml", "certs/server.pem", "tls.key", "store.p12", ".terraformrc"])
+		assert.ok(deniedSyncPath(p), p);
+	for (const p of [".env.example", ".env.sample", ".env-template", "environment.ts", "src/auth.js", "npmrc.md", "docs/credentials.md", "id_ed25519.pub", "ID_RSA.PUB", "keys.ts"])
 		assert.ok(!deniedSyncPath(p), p);
 });
 
@@ -295,4 +297,134 @@ test("local: refused or confined like vm_copy", async () => {
 	assert.match(outside.error, /outside the copy root/);
 	const inside = await ok({ from: "repo", local: { root: path.join(dir, "local") } });
 	assert.equal(inside.structured.tree.match, true);
+});
+
+test("a credential in history the VM lacks blocks the sync, even when it's gone from the tree", async () => {
+	write(repo, ".env", "SECRET=1\n");
+	git(repo, "add", "-A");
+	git(repo, "commit", "-qm", "oops");
+	git(repo, "rm", "-q", ".env");
+	git(repo, "commit", "-qm", "remove it");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /\.env is in the history this sync would send/);
+	assert.ok(!existsSync(vmProject()), "nothing sent");
+});
+
+test("a VM edit made after an interrupted swap isn't lost", async () => {
+	await ok();
+	write(repo, "README.md", "next\n");
+	const g = path.join(vmProject(), ".git");
+	const synced = git(vmProject(), "rev-parse", "refs/boxery/synced^{tree}");
+	write(vmProject(), "README.md", "half written\n");
+	const half = git(vmProject(), "rev-parse", `${git(vmProject(), "stash", "create")}^{tree}`);
+	writeFileSync(path.join(g, "boxery-sync-pending"), `${synced} ${half}\n`);
+	write(vmProject(), "src/app.js", "edited in the VM after the crash\n");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /interrupted earlier sync .* src\/app\.js/s);
+	assert.equal(read(vmProject(), "src/app.js"), "edited in the VM after the crash\n");
+	assert.ok(existsSync(path.join(g, "boxery-sync-pending")), "the record stays for the next attempt");
+});
+
+test("an interrupted swap whose refs were written is finished, not undone", async () => {
+	await ok();
+	const g = path.join(vmProject(), ".git");
+	const synced = git(vmProject(), "rev-parse", "refs/boxery/synced^{tree}");
+	writeFileSync(path.join(g, "boxery-sync-pending"), `${"0".repeat(40)} ${synced}\n`);
+	const r = await ok();
+	assert.equal(r.structured.tree.match, true);
+	assert.ok(!existsSync(path.join(g, "boxery-sync-pending")));
+});
+
+test("a path the VM has as an ignored file that local now tracks is refused, not overwritten", async () => {
+	await ok();
+	const synced = git(vmProject(), "rev-parse", "refs/boxery/synced");
+	write(vmProject(), "dist/out.js", "the VM's own build\n");
+	write(repo, "dist/out.js", "force-added locally\n");
+	git(repo, "add", "-f", "dist/out.js");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /tracks paths that exist in the VM as ignored files .*dist\/out\.js/s);
+	assert.equal(read(vmProject(), "dist/out.js"), "the VM's own build\n");
+	assert.equal(git(vmProject(), "rev-parse", "refs/boxery/synced"), synced, "nothing recorded");
+	assert.throws(() => git(vmProject(), "rev-parse", "-q", "--verify", "refs/boxery/incoming"), "fetched ref dropped");
+});
+
+test("an ignored VM directory replaced by a tracked file is refused", async () => {
+	await ok();
+	write(vmProject(), "dist/keep.js", "built\n");
+	write(repo, ".gitignore", "node_modules/\n");
+	write(repo, "dist", "now a file\n");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /dist/);
+	assert.equal(read(vmProject(), "dist/keep.js"), "built\n");
+});
+
+test("un-ignoring a path with VM files refuses cleanly, and the next sync isn't stuck", async () => {
+	await ok();
+	write(vmProject(), "dist/out.js", "built\n");
+	write(repo, ".gitignore", "node_modules/\n");
+	const before = git(vmProject(), "rev-parse", "refs/boxery/synced");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /ignored no longer are: .*dist\/out\.js/s);
+	assert.equal(git(vmProject(), "rev-parse", "refs/boxery/synced"), before, "nothing recorded");
+	assert.equal(read(vmProject(), ".gitignore"), "node_modules/\ndist/\n", "rolled back");
+	rmSync(path.join(vmProject(), "dist"), { recursive: true });
+	assert.equal((await ok()).structured.tree.match, true);
+});
+
+test("a VM directory inside another checkout is refused", async () => {
+	await ok();
+	const r = /** @type {any} */ (await sync({ to: "api" }));
+	assert.equal(r.ok, false);
+	assert.match(r.error, /is inside the git checkout \S*project/);
+	assert.ok(!existsSync(path.join(vmProject(), "api")));
+});
+
+test("a shallow clone gives a clear error", async () => {
+	git(repo, "commit", "-q", "--allow-empty", "-m", "second");
+	const shallow = path.join(dir, "local", "shallow");
+	git(dir, "clone", "-q", "--depth", "1", `file://${repo}`, shallow);
+	const r = /** @type {any} */ (await sync({ from: shallow }));
+	assert.equal(r.ok, false);
+	assert.match(r.error, /shallow clone/);
+});
+
+test("confined: no repository outside the root through a gitfile, and none of its config runs", async () => {
+	const root = path.join(dir, "share");
+	const outside = path.join(dir, "secret-repo");
+	mkdirSync(outside);
+	git(outside, "init", "-q");
+	write(outside, "private.txt", "private\n");
+	git(outside, "add", "-A");
+	git(outside, "commit", "-qm", "private");
+	const marker = path.join(dir, "fsmonitor-ran");
+	git(outside, "config", "core.fsmonitor", `touch ${marker}; false`);
+	mkdirSync(path.join(root, "checkout"), { recursive: true });
+	writeFileSync(path.join(root, "checkout", ".git"), `gitdir: ${path.join(outside, ".git")}\n`);
+	const r = /** @type {any} */ (await sync({ from: "checkout", local: { root } }));
+	assert.equal(r.ok, false);
+	assert.match(r.error, /outside the copy root/);
+	assert.ok(!existsSync(marker), "fsmonitor never ran");
+	assert.ok(!existsSync(vmProject()));
+
+	// A repository above the root isn't discovered from inside it either.
+	git(dir, "init", "-q");
+	git(dir, "config", "core.fsmonitor", `touch ${marker}; false`);
+	mkdirSync(path.join(root, "plain"));
+	const above = /** @type {any} */ (await sync({ from: "plain", local: { root } }));
+	assert.equal(above.ok, false);
+	assert.match(above.error, /not a git checkout/);
+	assert.ok(!existsSync(marker), "fsmonitor never ran");
+});
+
+test("confined: a filter driver in the checkout's config is refused", async () => {
+	const root = path.join(dir, "local");
+	git(repo, "config", "filter.x.clean", "touch /tmp/never");
+	const r = /** @type {any} */ (await sync({ from: "repo", local: { root } }));
+	assert.equal(r.ok, false);
+	assert.match(r.error, /filter driver/);
 });
