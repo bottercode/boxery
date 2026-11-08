@@ -25,7 +25,7 @@ export PATH="$tmp/bin:$PATH"
 # The executable path is data, including an apostrophe, $, backticks, %, spaces and shell syntax.
 rel="bin/it's \$(touch NOT_EXECUTED) \`echo no\` % host"
 mkdir -p "$REMOTE_HOME/bin"
-printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo '"'"'[{"name":"demo","state":"running"}]'"'"' ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; esac\n' >"$REMOTE_HOME/$rel"
+printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo '"'"'[{"name":"demo","state":"running"}]'"'"' ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; images) printf "via:%%s\\n" "${BOXERY_CLI-unset}" ;; esac\n' >"$REMOTE_HOME/$rel"
 chmod +x "$REMOTE_HOME/$rel"
 # Before any host is registered nothing is routed anywhere.
 if "$CLI" ls >/dev/null 2>&1; then echo 'routed without a host' >&2; exit 1; fi
@@ -39,6 +39,9 @@ if "$CLI" ls >/dev/null 2>&1; then echo 'routed without a host' >&2; exit 1; fi
 [ "$HOST_BIN" = "~/$rel" ]
 [ ! -e NOT_EXECUTED ]
 "$CLI" --host alpha ls | grep -q '^demo '
+# The remote host learns how boxery was run (BOXERY_CLI), for the commands its hints name.
+[ "$("$CLI" --host alpha images)" = "via:boxery --host alpha" ]
+[ "$("$CLI" images)" = "via:boxery" ]
 # Execute exactly the ProxyCommand resolved by OpenSSH: local shell -> ssh -> remote /bin/sh.
 proxy=$("$REAL_SSH" -F "$BOXERY_HOME/profiles/alpha/ssh_config" -G demo.boxery | sed -n 's/^proxycommand //p')
 # ssh -G retains tokens; model OpenSSH's percent substitution before /bin/sh executes it.

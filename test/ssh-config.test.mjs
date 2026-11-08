@@ -69,6 +69,8 @@ test("checkTarget and remoteCommand", () => {
 	const t = { host: "ben@hornet", hostBin: "~/bin/boxery host", hostProfile: "iso", identity: "" };
 	S.checkTarget(t);
 	assert.equal(S.remoteCommand(t, ["snap", "x; rm -rf /"]), `exec "$HOME"/'bin/boxery host' --profile iso 'snap' 'x; rm -rf /'`);
+	assert.equal(S.remoteCommand(t, ["images"], "boxery --host lab"), `exec env BOXERY_CLI='boxery --host lab' "$HOME"/'bin/boxery host' --profile iso 'images'`, "how boxery was run, for the host's hints");
+	assert.equal(execFileSync("sh", ["-c", `${S.remoteCommand({ ...t, hostBin: "/usr/bin/env", hostProfile: "" }, [], "boxery --host lab").replace(/^exec /, "")} | grep '^BOXERY_CLI='`], { encoding: "utf8" }), "BOXERY_CLI=boxery --host lab\n");
 	assert.throws(() => S.checkTarget({ ...t, host: "-oProxyCommand=x" }), /invalid ssh destination/);
 	assert.throws(() => S.checkTarget({ ...t, host: "a b" }), /invalid ssh destination/);
 	assert.throws(() => S.checkTarget({ ...t, hostBin: "-x" }), /invalid host executable/);

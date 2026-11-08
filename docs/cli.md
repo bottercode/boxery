@@ -8,7 +8,9 @@
 
 ## `boxery` (your laptop)
 
-`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
+`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`. `boxery --version` (or `-V`) is `boxery version`.
+
+Exit status: `0` on success; a command that runs something in the VM (`run`, `ssh`, `attach`, `wait` and the like) exits with its status, so a script can't tell boxery's codes from the command's. boxery's own failures exit `1`, and its usage errors (an unknown command or flag, a missing argument or flag value, arguments that don't fit the command's usage) exit `2`. A value that is refused (an invalid name, a VM that doesn't exist) is a failure, `1`, and so is a usage error that the host reports for a command boxery passes to it (`images`, `pool`, `runners`, …).
 
 - [All commands](#all-commands), generated from the same help
 
@@ -70,7 +72,7 @@ boxery pin demo [--from-guest]               # re-pin demo's ssh host key (a VM 
 
 ```bash
 boxery fork demo try-a try-b                 # copy demo (running or not) into 2 new VMs, ~15–25 s   [--grants] [--shape S]
-boxery snap demo before-refactor             # ~1 s, the VM keeps running
+boxery snap demo before-refactor             # ~1 s and live on libvirt; Lima restarts a running VM (~10 s)
 boxery snaps demo [--json]
 boxery revert demo before-refactor           # VM keeps its name, address and token
 boxery new demo2 --from demo@before-refactor # a new VM from a snapshot
@@ -80,12 +82,13 @@ boxery images                                # every snapshot on the host (with 
 
 A **fork** is a separate VM with the source's disk (files, installed packages, git state) but not its running processes, and with its own hostname, LLM proxy token, ssh keys and network identity. Forks don't depend on the source: removing either one is fine. Forks get the source's size (cpus, memory, disk) unless you pass `--shape` or size flags. Grants are per VM and aren't copied unless you pass `--grants`. That option revalidates the source grants and asks for each destination before creating anything; stale files or newly forbidden legacy grants must be revoked first (or omit `--grants`). A fork of a leased pool VM is an ordinary VM and never accepts the lease key.
 
-Snapshots and forks are built on one backend primitive, the image (a copy of a VM's disk named `VM@LABEL`). They hold disk state only, never memory, so secrets pushed by grants (tmpfs) are never captured. `rm` removes a VM's snapshots too. How each backend implements images: [backends](../host/backends/README.md#images-one-primitive-for-snapshots-forks-and-pool-resets).
+Snapshots and forks are built on one backend primitive, the image (a copy of a VM's disk named `VM@LABEL`). They hold disk state only, never memory, so secrets pushed by grants (tmpfs) are never captured. `rm` removes a VM's snapshots too. Capturing a running VM (`snap`, `fork`, `pool add`, `patch` of a pool VM) depends on the backend: libvirt does it live in about a second, exe.dev in about 12 s with the VM kept running, but **Lima stops the VM and starts it again** (about 10 s), because Lima clones only stopped instances, so its processes, tmux sessions and background jobs end. `boxery capabilities` (or `boxery backends --json`) shows this in the `diskSnapshots` note. How each backend implements images: [backends](../host/backends/README.md#images-one-primitive-for-snapshots-forks-and-pool-resets).
 
 ### Shell and in-VM agents
 
 ```bash
 boxery ssh demo [cmd…]                       # interactive shell (or: ssh demo.boxery)
+boxery ssh demo@lab                         # a VM on registered host lab (no default change)
 boxery run demo git log --oneline -5         # exact argv, like docker exec; runs in ~/project
 boxery run demo --cwd app pnpm test          # in ~/project/app
 boxery run demo bash -c 'make test 2>&1 | tail'   # a shell line: bash -c
@@ -96,6 +99,11 @@ boxery sessions demo [--json]                # list tmux sessions
 ```
 
 `run` works like `docker exec` / `kubectl exec`: the command gets exactly the arguments you pass, and nothing in them (quotes, `$`, `~`, globs, `;`) is re-parsed in the VM. For pipes, `&&`, `~` or `$VAR`, run a shell explicitly with `bash -c '…'` (how `run` used to treat every command). A whole command line passed as one argument (`boxery run demo 'make test'`) is looked up as a single command name and fails with a hint. An argument that is `~`, starts with `~/` or contains `$VAR`/`${…}` reaches the command literally and exits 0, so `run` adds a note on stderr pointing at `bash -c` (not when the command is a shell or an interpreter such as awk, perl or jq, whose code uses `$`). Like the `vm_bash` tool, `run` starts in `~/project` (home if there is none), and a relative `--cwd DIR` is under `~/project`; `~/` expands in the VM and absolute paths are used as is. `--` ends `run`'s own options. The exit code is the command's. `ssh NAME cmd…` keeps plain ssh semantics.
+
+`ssh NAME@HOST [CMD...]` is shorthand for `--host HOST ssh NAME [CMD...]`.
+`HOST` is a registered Boxery host, not an SSH destination or username. A matching
+`--host` is allowed; conflicting selectors are rejected before connecting. The
+shorthand does not change the default host and works even when none is selected.
 
 When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that run commands in a VM (`vm_bash`, `vm_jobs`, the file and desktop tools) report the same.
 
@@ -110,7 +118,7 @@ boxery --host hornet cp local:notes.md ci-1:~/notes.md
 
 `cp` is the `vm_copy` tool's own code, so it takes the same locations, `local:PATH`, `NAME:PATH` (a VM on the selected host) and `HOST/NAME:PATH`, and behaves the same way: streaming tar, staging, destination and cancellation rules are in [file transfers](copy.md). The one difference: the CLI has no current VM, so a bare path is on this machine, like `cp`/`scp` (`vm_copy` reads it as the current VM). A bare path that looks like a location with an invalid VM name (`Demo:x`) is refused instead of being written locally. Ctrl-C cancels and cleans up staging. `cp` runs on Node (≥ 20), which the npm package already needs.
 
-`prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`.
+`attach` starts pi, opencode or a shell (nothing else) and needs a terminal; without one it says to use `prompt` or `run --bg`, which work headless. `prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`. pi needs the `llm:` grant for its provider (`llm:chatgpt` unless you changed pi's settings in the VM), and a new VM has none: `prompt` checks first and, if it's missing, starts nothing and prints the `boxery grant` command to run.
 
 ### Background command jobs
 
@@ -246,7 +254,7 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 | Command | What it does |
 |---|---|
-| `boxery snap NAME [SNAP]` | Snapshot a VM's disk (~1 s; the VM keeps running) [→](#snapshots-and-forks) |
+| `boxery snap NAME [SNAP]` | Snapshot a VM's disk (Lima restarts a running VM) [→](#snapshots-and-forks) |
 | `boxery snaps NAME [--json]` | List a VM's snapshots |
 | `boxery revert NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) |
 | `boxery snap-rm NAME SNAP` | Delete a snapshot |
@@ -256,7 +264,7 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 | Command | What it does |
 |---|---|
-| `boxery ssh NAME [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
+| `boxery ssh NAME[@HOST] [CMD...]` | Shell into a VM (also: ssh NAME.boxery) |
 | `boxery run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]` | Run a command in ~/project, args as given (like docker exec) [→](#shell-and-in-vm-agents) |
 | `boxery cp FROM TO` | Copy files and directories to, from and between VMs [→](copy.md) |
 | `boxery desktop NAME [--no-open]` | Open a VM's desktop in your browser (noVNC over ssh) [→](#desktop-and-ports) |
@@ -311,6 +319,8 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 ## `boxery-host` (the VM host)
 
 `boxery-host help` lists every command; `boxery-host COMMAND --help` shows one. Generated from the same help (`host/help.mjs`); edit it there, then `npm run docs:cli`. `--profile NAME` before any command runs it in a second profile on this host (`~/.config/boxery-NAME`: its own backend, state, proxy port and services); `--profile NAME init --backend B` creates it with a free proxy port. `upgrade` keeps the code and each profile's state from before in `$BOXERY_CONF/pre-upgrade/` after a success too.
+
+Commands in messages name what you typed. The follow-up commands `boxery` prints (`run --bg`'s logs and wait, `prompt`, `acquire`, `ls`) keep your `--host NAME`; and when `boxery` runs a host command for you, it passes `BOXERY_CLI` (`boxery`, or `boxery --host NAME` if you gave one), so a host error suggests `boxery --host lab snap-rm demo s1` rather than `boxery-host snap-rm demo s1`. Commands only boxery-host has (`init`, …) keep its name. Called directly, boxery-host names itself.
 
 <!-- BEGIN generated: boxery-host commands (npm run docs:cli) -->
 

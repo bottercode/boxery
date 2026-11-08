@@ -4,12 +4,15 @@ import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { q } from "./shell.mjs";
 import { currentHost, registeredHosts, deniedDirs, isWithin, REMOTE_HOME } from "./boxery-core.mjs";
+import { listGrants } from "./grant-operations.mjs";
 export { listGrants, addGrants, revokeGrants, applyGrants, grantsChanged, storedSpecs } from "./grant-operations.mjs";
 /** Agent requests have the same validation, but cannot supply commands or arbitrary HTTP grants.
  * @param {GrantRequestArgs} [a] @param {{localCwd?: string}} [opts]
  */
 export function parseGrantRequest(a, opts) { return parseGrantSpec(a, opts); }
 /** @import { GrantSpec, GrantRequestArgs } from "./boxery-core.mjs" */
+/** The host proxy's LLM routes, which llm: grants name. */
+export const LLM_PROVIDERS = ["chatgpt", "openai", "anthropic", "ollama"];
 const quoteWord = (/** @type {string} */ s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : q(s));
 /** Is real path `p` inside `dir`? `dir` is resolved too (macOS: /var → /private/var). */
 const underDir = (/** @type {string} */ p, /** @type {string} */ dir) => {
@@ -48,7 +51,7 @@ export function parseGrantSpec({ spec, readonly, cmd, auth } = {}, { localCwd, c
 		if (!cmd) throw new Error(`${s} needs --cmd CMD`);
 		return { kind: "http", spec: s, host, cmd, auth: a, readonly: !!readonly };
 	}
-	const llm = /^llm:(chatgpt|openai|anthropic|ollama)$/.exec(s);
+	const llm = new RegExp(`^llm:(${LLM_PROVIDERS.join("|")})$`).exec(s);
 	if (llm) return { kind: "llm", spec: s, provider: llm[1] };
 	if (s.startsWith("llm:")) throw new Error(`unknown LLM provider "${s.slice(4)}" (llm:chatgpt, llm:openai, llm:anthropic or llm:ollama)`);
 	const env = /^env:([A-Za-z_][A-Za-z0-9_]*)$/.exec(s);
@@ -104,6 +107,23 @@ export function grantPrompt(vm, host, g, reason = undefined) {
 	}[g.kind];
 	const why = String(reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
 	return [`Give ${where} access to:`, "", ...what, "", `Revoke any time: ${grantCommand("revoke", vm, host, g)}`, ...(why ? ["", `The agent's reason: "${why}"`] : [])].join("\n");
+}
+
+// pi providers that reach their LLM through the host proxy, by baseUrl: the guest's proxy address (host/seed.mjs
+// PROXY, which points openai-codex and ollama there; test/grants.test.mjs keeps the two in step) and a route.
+const PROXY_ROUTE = new RegExp(`^http://127\\.0\\.0\\.1:8088/(${LLM_PROVIDERS.join("|")})(?:/|$)`);
+/** The llm: grant VM's pi needs for its configured provider and VM lacks (e.g. "llm:chatgpt"), or null: it has
+ *  the grant, or the provider doesn't go through the host proxy. The texts are the VM's pi files ("" when
+ *  missing); the project's settings win over the user's, as in pi.
+ *  @param {string} vm @param {{ settings?: string, projectSettings?: string, models?: string }} files */
+export function missingPiGrant(vm, { settings = "", projectSettings = "", models = "" }) {
+	const json = (/** @type {string} */ t) => { try { return JSON.parse(t) ?? {}; } catch { return {}; } };
+	const provider = json(projectSettings).defaultProvider ?? json(settings).defaultProvider;
+	if (typeof provider !== "string") return null;
+	const base = json(models).providers?.[provider]?.baseUrl;
+	const route = typeof base === "string" ? PROXY_ROUTE.exec(base)?.[1] : undefined;
+	if (!route || listGrants(vm).some((g) => g.kind === "llm" && g.provider === route)) return null;
+	return `llm:${route}`;
 }
 
 /** @param {"grant" | "revoke"} verb @param {string} vm @param {string} host @param {GrantSpec} g */
