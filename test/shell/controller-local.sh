@@ -132,6 +132,18 @@ log=$(sed -n 's/.*log: boxery run w1 cat \(\.boxery\/task-[0-9-]*\.log\)$/\1/p' 
 [[ -n $log ]] && echo "task log" >"$tmp/vms/w1/home/project/$log"
 [[ -n $log && $("$A" run w1 cat "$log" 2>&1) == "task log" ]] && ok "prompt's log hint names the log under ~/project" || bad "prompt log hint: $out"
 "$A" revoke w1 llm:chatgpt >/dev/null 2>&1
+# attach runs only its three tools, and says what to use instead when there is no terminal. With python3
+# (not in every test image), the cases run on a pseudo-terminal too, as a person's attach does.
+: >"$tmp/tmux.calls"; printf '#!/bin/sh\necho "$*" >>%q\n[ "$1" != has-session ]\n' "$tmp/tmux.calls" >"$tmp/bin/tmux"
+onpty() { if command -v python3 >/dev/null; then python3 -c 'import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))' "$@" </dev/null; else "$@" </dev/null; fi; }
+rc=0; out=$(onpty "$A" attach w1 "bogus'; touch $tmp/pwned-attach; '" 2>&1) || rc=$?
+[[ $rc == 2 && $out == *"unknown agent: bogus"*"(pi, opencode or shell)"* && ! -e $tmp/pwned-attach && ! -s $tmp/tmux.calls ]] && ok "attach refuses an unknown tool (exit 2), running nothing" || bad "attach bogus ($rc): $out"
+rc=0; out=$("$A" attach w1 shell 2>&1 </dev/null) || rc=$?
+[[ $rc == 1 && $out == *"attach needs a terminal"*"boxery prompt w1"*"boxery run --bg w1"* && ! -s $tmp/tmux.calls ]] && ok "attach without a terminal points at prompt and run --bg" || bad "attach without a terminal ($rc): $out"
+if command -v python3 >/dev/null; then
+	rc=0; out=$(onpty "$A" attach w1 shell 2>&1) || rc=$?
+	[[ $rc == 0 ]] && grep -q "^new-session -d -s shell -c .* bash -lc 'bash -l; exec bash -l'$" "$tmp/tmux.calls" && grep -qx "attach -t shell" "$tmp/tmux.calls" && ok "attach on a terminal: shell runs bash -l in its tmux session" || bad "attach shell ($rc): $out / $(cat "$tmp/tmux.calls")"
+fi
 rm -f "$tmp/bin/tmux"
 # A VM that doesn't exist (#210): ssh exits 255, and ControlPersist would hide the host's reason, so the
 # controller says it. A command's own exit 255 is not taken for that.
