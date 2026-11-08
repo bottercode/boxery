@@ -4,6 +4,7 @@ import { accessSync, constants } from "node:fs";
 import path from "node:path";
 import { BACKENDS, backendMetadata, capabilityStatus, declared, matchesPlatform, platformStatus } from "../backends/index.mjs";
 import { fail, log, print } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Configuration, Requirement } from "../backends/index.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
@@ -58,7 +59,7 @@ export function checkBackend(backend, opts) {
 /** @param {Runtime} rt @param {string[]} args */
 export function capabilities(rt, args) {
 	if (args.length === 1 && args[0] === "--check") return checkBackend(rt.backend, { env: rt.env });
-	if (args.some((a) => a !== "--json") || args.length > 1) fail("usage: capabilities [--json | --check]");
+	if (args.some((a) => a !== "--json") || args.length > 1) fail(hostUsage("capabilities"));
 	if (!declared(rt.backend)) {
 		if (args.includes("--json")) return print(JSON.stringify({ schemaVersion: 1, backend: { id: rt.backend, declared: false } }));
 		return print(`${rt.backend}: no declaration in backends/index.mjs; its platforms, requirements and capabilities are unknown`);
@@ -71,7 +72,7 @@ export function capabilities(rt, args) {
 }
 /** @param {Runtime} _rt @param {string[]} args */
 export function backends(_rt, args) {
-	if (args.some((a) => a !== "--json") || args.length > 1) fail("usage: backends [--json]");
+	if (args.some((a) => a !== "--json") || args.length > 1) fail(hostUsage("backends"));
 	if (args.includes("--json")) return print(JSON.stringify({ schemaVersion: 1, backends: Object.values(BACKENDS) }));
 	for (const m of Object.values(BACKENDS)) print(`${m.id}\t${m.stability}\t${m.supported.map((p) => `${p.os}/${p.arch}`).join(", ")}\t${m.runtime.location} compute`);
 }

@@ -22,6 +22,7 @@ import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fail, validName } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 /** @import { GuestEndpoint } from "./guest.mjs" */
 
@@ -146,7 +147,7 @@ export function knownHosts(rt, [name = ""]) {
 export async function pin(rt, args) {
 	const names = args.filter((a) => !a.startsWith("-"));
 	for (const a of args) if (a.startsWith("-") && a !== "--from-guest") fail(`unknown flag ${a}`);
-	if (names.length !== 1) fail("usage: pin NAME [--from-guest]");
+	if (names.length !== 1) fail(hostUsage("pin"));
 	const name = validName(names[0]);
 	rt.requireLock(name);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);

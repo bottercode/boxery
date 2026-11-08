@@ -10,6 +10,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostUsage } from "./help.mjs";
 
 /** @typedef {{ version: string, describe: string | null, commit: string | null, branch: string | null, install: "git" | "npm" | "unknown", root: string }} VersionInfo */
 /** A boxery service file's command. @typedef {{ kind: "proxy" | "reaper", root: string, conf: string | null, node: string | null, path: string | null }} Service */
@@ -295,7 +296,7 @@ async function verify(conf, node) {
 
 // ---------------------------------------------------------------- commands
 
-const USAGE = "usage: boxery-host upgrade [--check] [--ref REF] [--wait SECONDS] [--reinit]";
+const USAGE = hostUsage("upgrade");
 /** @param {string[]} argv */
 export function parseArgs(argv) {
 	/** @type {UpgradeOptions} */
@@ -376,7 +377,7 @@ async function upgrade(argv) {
 async function main() {
 	const [command, ...args] = process.argv.slice(2);
 	if (command === "version") {
-		if (args.length > 1 || (args[0] && args[0] !== "--json")) fail("usage: boxery-host version [--json]");
+		if (args.length > 1 || (args[0] && args[0] !== "--json")) fail(hostUsage("version"));
 		const v = versionInfo();
 		process.stdout.write(args[0] ? `${JSON.stringify(v)}\n` : `${label(v)}  ${v.install}  ${v.root}\n`);
 	} else if (command === "upgrade") await upgrade(args);

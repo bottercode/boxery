@@ -11,6 +11,7 @@ import { defaultConf, HOST_ENV } from "./config.mjs";
 import { ensureHostKey, hasHostKey } from "./hostkeys.mjs";
 import { baseUserdata } from "./seed.mjs";
 import { fail, jsonArray, log, print, readFd, sleep, table } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Config } from "./config.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
@@ -146,7 +147,7 @@ async function pickProxyPort(others) {
 export function profiles(_rt, [arg]) {
 	const list = hostProfiles().map(({ env: _env, ...p }) => p);
 	if (arg === "--json") return print(jsonArray(list));
-	if (arg) fail("usage: profiles [--json]");
+	if (arg) fail(hostUsage("profiles"));
 	print(table([16, 18, 7, 24], [["PROFILE", "BACKEND", "PORT", "UNIT", "CONF"], ...list.map((p) => [p.name, p.backend, p.proxyPort, p.proxyUnit, p.conf])]));
 }
 

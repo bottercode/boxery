@@ -10,6 +10,7 @@ import { issueToken, writeSeed } from "./seed.mjs";
 import { shapeSize } from "./shapes.mjs";
 import { fail, log, print, stamp, validImage, validName, validNum } from "./util.mjs";
 import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } from "./vm-records.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 /** @import { VmKind } from "./vm-records.mjs" */
@@ -45,7 +46,7 @@ async function mustRun(rt, ep, command) {
 }
 
 // ---------------------------------------------------------------- new
-const NEW_USAGE = "usage: new NAME [--shape S] [--cpus N] [--mem MiB] [--disk GiB] [--from IMAGE] [--headless [--layers L,…]]";
+const NEW_USAGE = hostUsage("new");
 /** new NAME [--shape S] [--cpus N] [--mem MiB] [--disk GiB] [--from IMAGE] [--headless [--layers L,…]] @param {string[]} args */
 export function parseNewArgs(args) {
 	/** @type {NewArgs} */
@@ -168,7 +169,7 @@ export async function fork(rt, args) {
 		else if (!src) src = a;
 		else dsts.push(a);
 	}
-	if (!src || !dsts.length) fail("usage: fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB]");
+	if (!src || !dsts.length) fail(hostUsage("fork"));
 	validName(src);
 	if (!await rt.vms.exists(src)) fail(`no such vm: ${src}`);
 	inheritedType(rt.db(), src); // a guest OS this boxery doesn't know fails here, before the capture
@@ -257,7 +258,7 @@ export async function stop(rt, [name]) {
 }
 
 // ---------------------------------------------------------------- resize
-const RESIZE_USAGE = "usage: resize NAME [--cpus N] [--mem MiB] [--disk GiB]";
+const RESIZE_USAGE = hostUsage("resize");
 /** @param {Runtime} rt @param {string[]} argv */
 export async function resize(rt, [name, ...args]) {
 	if (!name || name.startsWith("-")) fail(RESIZE_USAGE);
