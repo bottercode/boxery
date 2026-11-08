@@ -1,6 +1,6 @@
 # Contributing / testing
 
-boxery has no build step and no runtime dependencies: clone it and run the commands below with Node ≥ 22.13. [ARCHITECTURE.md](ARCHITECTURE.md) maps the code; [AGENTS.md](AGENTS.md) is the short version of this file for coding agents.
+boxery has no build step and no runtime dependencies: clone it and run the commands below with Node ≥ 22.13. [ARCHITECTURE.md](ARCHITECTURE.md) maps the code; [AGENTS.md](AGENTS.md) is guidance for coding agents (and a fair summary of how the code is meant to be shaped).
 
 ```bash
 npm run lint && npm test && npm run test:shell
@@ -52,7 +52,7 @@ Types: the code is plain JavaScript typed with JSDoc comments (`/** @param {stri
 
 `test/lease-workflows.test.mjs` tests lease policy directly through injected store/backend/journal dependencies, without SQLite or subprocesses. [Host module boundaries](docs/host-modules.md) documents ownership and dependencies. `test/operations.test.mjs` uses deterministic fake-backend barriers to SIGKILL supervisors while their worker groups are alive, checking both recovery and external side effects. Keep these tests offline: they use only temporary config and VM directories. The [lifecycle contract](docs/lifecycle.md) documents resource boundaries, durable intents and backend recovery responsibilities.
 
-Backends live in `host/backends/<name>.sh` and implement the contract in `host/backends/README.md`; `fake.sh` is the test double. Bash files (`controller/boxery`, `host/boxery-host`, `host/backend.sh`, the backends, `core/boxery-job-runner.sh`) must run under macOS's bash 3.2.
+Backends live in `host/backends/<name>.sh` and implement the contract in `host/backends/README.md`; `fake.sh` is the test double. What is written in Bash (the entry shims, `connect`, the backends, the job runner) runs under macOS's bash 3.2; [AGENTS.md](AGENTS.md#node-and-bash) explains why each of those is Bash and when to move one to Node.
 
 Named-host interface/layout: [docs/hosts.md](docs/hosts.md). `test/hosts.test.mjs` uses independent fake profile directories and SSH/host stubs to check duplicate VM names, per-call contexts, cross-host copies, timeout cleanup and HTTP session isolation. `test/shell/controller-hosts.sh` exercises the real CLI (`controller/boxery` → `cli.mjs`) and real `ssh -G` config parser without connecting to any host, including remote tilde and hostile executable paths. All profiles and grants are temporary; never point offline tests at a real BOXERY_HOME. For native macOS Bash 3.2 (what still runs in Bash: entry shims, `connect`, backends, sourced profile configs): `BASH_UNDER_TEST=/bin/bash npm run test:shell`.
 
