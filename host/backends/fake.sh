@@ -59,7 +59,13 @@ backend_wait_endpoint() { echo "127.0.0.1 $(fake_port "$1")"; }
 # BOXERY_FAKE_DAEMON: leave a background process behind, as limactl start does with its hostagent
 fake_daemon() { if [[ -n ${BOXERY_FAKE_DAEMON:-} ]]; then sleep "$BOXERY_FAKE_DAEMON" >/dev/null 2>&1 & fi; }
 backend_start() { echo running >"$FAKE/$1/state"; fake_daemon; }
-backend_stop() { echo "shut off" >"$FAKE/$1/state"; }
+# BOXERY_FAKE_STOP_LAG=SECONDS: like libvirt, return while the guest is still shutting down ("never": it hangs).
+backend_stop() {
+	local lag=${BOXERY_FAKE_STOP_LAG:-}
+	if [[ -z $lag ]]; then echo "shut off" >"$FAKE/$1/state"; return; fi
+	echo "in shutdown" >"$FAKE/$1/state"
+	[[ $lag == never ]] || { sleep "$lag"; echo "shut off" >"$FAKE/$1/state"; } >/dev/null 2>&1 &
+}
 backend_size() { cat "$FAKE/$1/size"; }
 # Like the real backends, a running VM is stopped for the change and left running; restarts are counted.
 backend_resize() { # NAME CPUS MEM DISK (empty = unchanged)

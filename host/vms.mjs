@@ -8,7 +8,7 @@ import { captureVm, cleanupVmImages } from "./images.mjs";
 import { deleteHostKey } from "./hostkeys.mjs";
 import { issueToken, writeSeed } from "./seed.mjs";
 import { shapeSize } from "./shapes.mjs";
-import { fail, log, print, stamp, validImage, validName, validNum } from "./util.mjs";
+import { fail, log, print, sleep, stamp, validImage, validName, validNum } from "./util.mjs";
 import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } from "./vm-records.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
@@ -236,11 +236,29 @@ export async function rm(rt, [name]) {
 	log(`${name} removed with its snapshots (proxy token revoked)`);
 }
 
+/** How a stop's result shows in backend_list ("" while it isn't stopped). exe.dev's stop pauses; on the
+ *  other backends a paused VM is still active (libvirt pauses a domain on an I/O error), so it isn't
+ *  stopped there. @param {Runtime} rt @param {string} state */
+const stoppedAs = (rt, state) => (state === "shut off" ? "stopped" : state === "paused" && rt.backend === "exe" ? "paused" : "");
+/** NAME's row in the backend's inventory. undefined if it can't be read: start and stop then leave it to
+ *  the backend, as before. @param {Runtime} rt @param {string} name */
+async function inventoryEntry(rt, name) {
+	try { return (await rt.vms.list({ quiet: true })).find((v) => v.name === name); } catch { return undefined; }
+}
+
 /** @param {Runtime} rt @param {string[]} args */
 export async function start(rt, [name]) {
 	validName(name);
 	// Checked here, not left to the backend: `limactl start` of an unknown instance creates one (#209).
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
+	// Agents retry, so a VM that already runs is success, the same on every backend (#214); it still has to
+	// answer ssh. One whose tunnel isn't up goes to the backend: its start brings the tunnel back.
+	const vm = await inventoryEntry(rt, name);
+	if (vm?.state === "running" && (!vm.tunnel || vm.tunnel === "up")) {
+		await rt.waitSsh(name, await rt.vms.waitEndpoint(name));
+		log(`${name} is already running`);
+		return;
+	}
 	await rt.vms.call("backend_start", [name]);
 	const ep = await rt.vms.waitEndpoint(name);
 	await rt.waitSsh(name, ep);
@@ -252,12 +270,26 @@ export async function start(rt, [name]) {
 	log(`${name} started`);
 }
 
-/** @param {Runtime} rt @param {string[]} args */
+/** Stop NAME and wait until it is off: some backends only ask the guest to shut down (libvirt, cloud-hypervisor),
+ *  and a `stop && start` must not find it still running (#214). @param {Runtime} rt @param {string[]} args */
 export async function stop(rt, [name]) {
 	validName(name);
 	if (!await rt.vms.exists(name)) fail(`no such vm: ${name}`);
+	const vm = await inventoryEntry(rt, name);
+	// A stopped VM whose tunnel is still up (stopped outside boxery) goes to the backend, which ends the tunnel.
+	const was = stoppedAs(rt, vm?.state ?? "");
+	if (was && (!vm?.tunnel || vm.tunnel === "down")) { log(`${name} is already ${was}`); return; }
 	await rt.vms.call("backend_stop", [name]);
-	log(`${name} shutting down`);
+	const wait = Number(rt.env?.BOXERY_STOP_WAIT) > 0 ? Number(rt.env?.BOXERY_STOP_WAIT) : 120, t0 = Date.now();
+	for (let announced = false; ;) {
+		const now = await inventoryEntry(rt, name);
+		if (!now) { log(`${name} shutting down`); return; } // can't tell: as before
+		const as = stoppedAs(rt, now.state);
+		if (as) { log(`${name} ${as}`); return; }
+		if (Date.now() - t0 >= wait * 1000) fail(`${name} is still ${now.state || "running"} ${wait}s after it was asked to shut down; run stop again, or look at the guest's console`);
+		if (!announced) { log(`${name} shutting down`); announced = true; }
+		await sleep(1000);
+	}
 }
 
 // ---------------------------------------------------------------- resize

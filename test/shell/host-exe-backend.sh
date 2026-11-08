@@ -274,9 +274,14 @@ grep -F 'ssh -a -x -o ForwardAgent=no' "$CALLS" >/dev/null && ok "edge ssh never
 [[ ! -f $UNITS/boxery-exe-bxtest-v-v1.service ]] && ok "stop stops the tunnel" || bad "tunnel still up"
 lsj | jq -e 'map(select(.name == "v1"))[0] | .state == "paused" and .ssh_addr == null' >/dev/null && ok "paused VM: no addr" || bad "ls stopped: $(lsj)"
 expect_fail "ip of a stopped VM fails" "$H" ip v1
+# Agents retry (#214): stop of a paused VM and start of a running one leave it alone.
+: >"$CALLS"
+e=$("$H" stop v1 2>&1) && [[ $e == *"v1 is already paused"* ]] && ! called "exe.dev pause" && ok "stop of a paused VM: no second pause" || bad "stop paused: $e / $(grep 'exe.dev' "$CALLS")"
 : >"$CALLS"
 expect "start" "$H" start v1
 called "exe.dev resume $(V v1)" && [[ -f $UNITS/boxery-exe-bxtest-v-v1.service ]] && ok "start resumes and brings the tunnel back" || bad "start: $(cat "$CALLS")"
+: >"$CALLS"
+e=$("$H" start v1 2>&1) && [[ $e == *"v1 is already running"* ]] && ! called "exe.dev resume" && ! called "exe.dev restart" && ok "start of a running VM with its tunnel up: no resume" || bad "start running: $e / $(grep 'exe.dev' "$CALLS")"
 # A resumed VM keeps its old size: a VM resized while paused is restarted by its next start.
 expect "stop again" "$H" stop v1
 : >"$CALLS"
@@ -301,7 +306,7 @@ touch "$UNITS/$UV"
 NC_DOWN=1 lsj | jq -e 'map(select(.name == "v1"))[0].tunnel == "connecting"' >/dev/null && ok "unit active but its -L end closed: connecting" || bad "nc down: $(NC_DOWN=1 lsj)"
 e=$(NC_DOWN=1 BOXERY_EXE_TUNNEL_WAIT=1 "$H" start v1 2>&1) && bad "start succeeded without a tunnel" ||
 	{ [[ $e == *"timed out after 1s: the ssh tunnel to v1 isn't connected"* && $e != *"waiting for ssh"* ]] && ok "start: a tunnel that never connects is reported as such, not as an ssh timeout" || bad "start: $e"; }
-e=$(BOXERY_EXE_TUNNEL_WAIT=0 "$H" start v1 2>&1) && bad "start with BOXERY_EXE_TUNNEL_WAIT=0 succeeded" ||
+e=$(NC_DOWN=1 BOXERY_EXE_TUNNEL_WAIT=0 "$H" start v1 2>&1) && bad "start with BOXERY_EXE_TUNNEL_WAIT=0 succeeded" ||
 	{ [[ $e == *"BOXERY_EXE_TUNNEL_WAIT must be a number of seconds >= 1 (got '0')"* && $e != *"unbound variable"* ]] && ok "BOXERY_EXE_TUNNEL_WAIT=0 is rejected clearly" || bad "wait 0: $e"; }
 "$H" ls | awk '$1 == "v1" && substr($0, 29, 19) == "127.0.0.1:22401    " { f = 1 } END { exit !f }' && ok "ls: ADDR column is 18 wide" || bad "ls width: $("$H" ls)"
 rm -f "$UNITS/$UV" "$UNITS/enabled.$UV"   # unit removed by hand
