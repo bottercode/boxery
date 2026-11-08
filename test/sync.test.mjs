@@ -2,7 +2,8 @@
 // "VM" is a directory, and its ssh runs scripts there with /home/agent mapped to it. No real VMs.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test as nodeTest } from "node:test";
@@ -71,6 +72,7 @@ beforeEach(() => {
 	env = {
 		...process.env, ...GIT_ENV, HOME: home, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, BOXERY_HOME: home,
 		COPY_ROOT: dir, COPY_LOG: path.join(dir, "calls"), REAL_TAR: execFileSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).trim(),
+		REAL_GIT: execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
 	};
 	repo = path.join(dir, "local", "repo");
 	mkdirSync(repo, { recursive: true });
@@ -92,7 +94,10 @@ test("first sync into an empty directory: a detached checkout that matches", asy
 	assert.equal(r.structured.sha, head);
 	assert.equal(r.structured.tree.match, true);
 	assert.equal(r.structured.tree.local, r.structured.tree.vm);
-	assert.ok(r.structured.transferred_bytes > 0);
+	assert.equal(r.structured.pushed, true);
+	assert.ok(r.structured.objects_sent > 0);
+	assert.ok(readFileSync(path.join(dir, "calls"), "utf8").includes("receive-pack"), "commits went by git push");
+	assert.equal(git(vmProject(), "for-each-ref", "refs/boxery/incoming/"), "", "the pushed ref is dropped after apply");
 	assert.equal(typeof r.structured.elapsed_ms, "number");
 	assert.equal(git(vmProject(), "rev-parse", "HEAD"), head);
 	assert.throws(() => git(vmProject(), "symbolic-ref", "-q", "HEAD"), "detached");
@@ -213,13 +218,14 @@ test("a second sync with no local changes transfers nothing and still matches", 
 	const first = await ok();
 	const calls = readFileSync(path.join(dir, "calls"), "utf8").split("\n").filter(Boolean).length;
 	const second = await ok();
-	assert.equal(second.structured.transferred_bytes, 0);
+	assert.equal(second.structured.pushed, false);
+	assert.equal(second.structured.objects_sent, 0);
 	assert.equal(second.structured.tree.match, true);
 	assert.equal(second.structured.lockfile_changed, false);
 	assert.equal(second.structured.snapshot, first.structured.snapshot, "the same working changes give the same snapshot commit");
 	assert.match(second.text, /· tree matches$/);
-	const tars = readFileSync(path.join(dir, "calls"), "utf8").split("\n").filter(Boolean).slice(calls).map((l) => JSON.parse(l)).filter((c) => c.kind === "tar");
-	assert.deepEqual(tars, [], "no tar transfer the second time");
+	const pushes = readFileSync(path.join(dir, "calls"), "utf8").split("\n").filter(Boolean).slice(calls).map((l) => JSON.parse(l)).filter((c) => String(c.script).includes("receive-pack"));
+	assert.deepEqual(pushes, [], "no push the second time");
 });
 
 test("a lockfile change is flagged, once", async () => {
@@ -236,24 +242,40 @@ test("a lockfile change is flagged, once", async () => {
 	assert.equal((await ok()).structured.lockfile_changed, false);
 });
 
-test("cancellation mid-transfer leaves the VM unchanged", async () => {
+test("cancellation mid-push leaves the VM unchanged", async () => {
 	await ok();
 	const before = tree(vmProject());
 	const head = git(vmProject(), "rev-parse", "HEAD");
-	write(repo, "big.bin", Buffer.alloc(8 * 1024 * 1024, 7));
+	const refs = git(vmProject(), "for-each-ref");
+	write(repo, "big.bin", randomBytes(4 * 1024 * 1024));
 	write(repo, "README.md", "changed\n");
-	env.COPY_SLOW_SOURCE = "local";
-	const calls = () => readFileSync(path.join(dir, "calls"), "utf8");
-	const mark = calls().length;
-	const r = /** @type {any} */ (await sync({}, { abortWhen: () => calls().slice(mark).includes("\"role\":\"destination\"") }));
+	const started = path.join(dir, "receive-started");
+	// Only here: a git double whose receive-pack (the VM end of the push) is slow.
+	writeFileSync(path.join(dir, "bin", "git"), `#!/usr/bin/env bash\nexec ${q(process.execPath)} ${q(path.join(FIXTURES, "sync-git.mjs"))} "$@"\n`, { mode: 0o755 });
+	env.SYNC_SLOW_RECEIVE = started;
+	env.FAKE_VM_PATH = env.PATH;
+	const r = /** @type {any} */ (await sync({}, { abortWhen: () => existsSync(started) }));
+	delete env.SYNC_SLOW_RECEIVE;
+	delete env.FAKE_VM_PATH;
+	unlinkSync(path.join(dir, "bin", "git"));
+	assert.ok(existsSync(started), `the push was in flight (${r.error ?? "it finished"})`);
 	assert.equal(r.ok, false);
 	assert.equal(r.name, "AbortError");
 	assert.deepEqual(tree(vmProject()), before);
 	assert.equal(git(vmProject(), "rev-parse", "HEAD"), head);
-	const cache = path.join(dir, "vms", "alpha", "vm", ".cache", "boxery");
-	assert.deepEqual(existsSync(cache) ? execFileSync("ls", ["-A", cache], { encoding: "utf8" }).trim() : "", "", "no bundle or staging left");
-	delete env.COPY_SLOW_SOURCE;
+	assert.equal(git(vmProject(), "for-each-ref"), refs, "no ref was written");
+	// receive-pack quarantines incoming objects and removes them when the push dies.
+	const objects = path.join(vmProject(), ".git", "objects");
+	for (let i = 0; i < 100 && readdirSync(objects).some((n) => n.startsWith("tmp_objdir")); i++) await new Promise((res) => setTimeout(res, 50));
+	assert.deepEqual(readdirSync(objects).filter((n) => n.startsWith("tmp_objdir")), [], "no quarantined objects left");
 	assert.equal((await ok()).structured.tree.match, true, "a later sync completes");
+});
+
+test("a push into a missing directory creates the repository only there", async () => {
+	const r = await ok({ to: "~/fresh/repo" });
+	assert.equal(r.structured.tree.match, true);
+	const vmHome = path.join(dir, "vms", "alpha", "vm");
+	assert.deepEqual(tree(path.join(vmHome, "fresh", "repo")), tree(repo));
 });
 
 test("an interrupted swap is undone by the next sync", async () => {

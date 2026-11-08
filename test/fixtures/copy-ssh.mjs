@@ -35,7 +35,9 @@ if (preparing && process.env.COPY_LATE_PREPARE === endpoint) {
 }
 if (preparing && process.env.COPY_SLOW_PREPARE === endpoint) await new Promise((r) => setTimeout(r, 200));
 /** @type {NodeJS.ProcessEnv} */
-const env = { ...process.env, COPY_ENDPOINT: endpoint, HOME: root };
+// A real sshd starts the remote command with a fresh environment; git push's ssh inherits git's
+// exec-path at the front of PATH, which FAKE_VM_PATH (when set) undoes.
+const env = { ...process.env, COPY_ENDPOINT: endpoint, HOME: root, ...(process.env.FAKE_VM_PATH ? { PATH: process.env.FAKE_VM_PATH } : {}) };
 if (process.env.COPY_SKIP_EXIT_SNAPSHOT === endpoint) env.BASH_ENV = path.join(/** @type {string} */ (process.env.COPY_ROOT), "no-exit-trap.sh");
 const child = spawn("bash", ["-c", script], { env, cwd: root, stdio: "inherit" });
 child.on("error", () => { process.exitCode = 255; });

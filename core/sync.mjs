@@ -1,20 +1,20 @@
 // vm_sync: push the caller's local git checkout into a VM, so the VM's tree matches it exactly (docs/sync.md).
-// Commits travel as a git bundle over vm_copy's streaming transport (copy-stream.mjs); neither side ever
-// contacts a git remote. The VM side is core/sync-guest.sh, sent with every call. The local repository
+// Commits travel by `git push` over the VM's ssh connection (the profile's ssh_config, pinned host key),
+// straight into git receive-pack in the VM; neither side ever contacts a git remote. The VM side is core/sync-guest.sh, sent with every call. The local repository
 // is only read: the snapshot of its working changes is built in a scratch index and object directory.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { q } from "./shell.mjs";
-import { streamCopy } from "./copy-stream.mjs";
-import { PROJECT, REMOTE_HOME, assertName, confineLocal, currentHost, deniedDirs, isWithin, sshRun, vmPath } from "./boxery-core.mjs";
+import { PROJECT, assertName, confineLocal, currentHost, deniedDirs, isWithin, sshRun, vmPath } from "./boxery-core.mjs";
 /** @import { LocalConfinement, ToolResult } from "./boxery-core.mjs" */
 /** @typedef {{ from?: string, to?: string }} SyncParams */
 /** @typedef {{ localCwd?: string, local?: LocalConfinement | false, signal?: AbortSignal }} SyncOpts */
-/** What the VM reported (sync-guest.sh probe, or apply's tree and lockfile_changed). @typedef {{ state: string, format?: string, synced?: string, base?: string, head?: string, has?: string, pending?: string, baseline?: string, worktree?: string, tree?: string, lockfile_changed?: string, changed: string[], entry: string[] }} Probe */
+/** What the VM reported (sync-guest.sh probe, or apply's tree and lockfile_changed). tip: the VM repo's ref tips.
+ * @typedef {{ state: string, format?: string, synced?: string, base?: string, head?: string, has?: string, pending?: string, baseline?: string, worktree?: string, tree?: string, lockfile_changed?: string, changed: string[], entry: string[], tip: string[] }} Probe */
 
 const guestTemplate = readFileSync(new URL("./sync-guest.sh", import.meta.url), "utf8");
 
@@ -57,14 +57,16 @@ const baseEnv = () => {
 const SAFE_CONFIG = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"];
 const aborted = () => Object.assign(new Error("sync aborted; the VM was not changed"), { name: "AbortError" });
 
-/** Run git locally → stdout. @param {string[]} args @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [opts] @returns {Promise<string>} */
-function git(args, { cwd, env = baseEnv() } = {}) {
+/** Run git locally → stdout. @param {string[]} args @param {{ cwd?: string, env?: NodeJS.ProcessEnv, input?: string }} [opts] @returns {Promise<string>} */
+function git(args, { cwd, env = baseEnv(), input } = {}) {
 	return new Promise((resolve, reject) => {
-		execFile("git", [...SAFE_CONFIG, ...args], { cwd, env, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
+		const child = execFile("git", [...SAFE_CONFIG, ...args], { cwd, env, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
 			if (!error) return resolve(stdout);
 			const e = /** @type {NodeJS.ErrnoException} */ (error);
-			reject(new Error(e.code === "ENOENT" ? "git is not installed on this machine" : `git ${args[0]}: ${stderr.trim() || e.message}`));
+			reject(new Error(e.code === "ENOENT" ? "git is not installed on this machine" : `git ${args.find((a) => !a.startsWith("-") && !a.includes("=") && a !== "--git-dir") ?? args[0]}: ${stderr.trim() || e.message}`));
 		});
+		child.stdin?.on("error", () => {});
+		child.stdin?.end(input ?? "");
 	});
 }
 const tryGit = (/** @type {string[]} */ args, /** @type {{ cwd?: string, env?: NodeJS.ProcessEnv }} */ opts) => git(args, opts).then((s) => s.trim(), () => null);
@@ -72,7 +74,7 @@ const tryGit = (/** @type {string[]} */ args, /** @type {{ cwd?: string, env?: N
 /** key=value lines from sync-guest.sh. Repeated keys (changed, entry) collect into arrays. @param {string} out @returns {Probe} */
 function parseLines(out) {
 	/** @type {any} */
-	const r = { changed: [], entry: [] };
+	const r = { changed: [], entry: [], tip: [] };
 	for (const line of out.split("\n")) {
 		const i = line.indexOf("=");
 		if (i <= 0) continue;
@@ -198,37 +200,61 @@ function refuseCredentials(root, files, deny) {
 }
 
 /**
- * A bundle of the commits the VM lacks (null when it has the snapshot already), excluding what it has.
- * @param {Awaited<ReturnType<typeof snapshot>>} s @param {Probe} probe @param {string} scratch @param {string} id
+ * A bare scratch repository to push from: its alternates are the scratch objects and the checkout's, so
+ * refs/heads/sync can point at the snapshot without touching the checkout's refs. Refuses a credential
+ * anywhere in the commits the VM may lack (those not reachable from its ref tips), not just the snapshot.
+ * @param {Awaited<ReturnType<typeof snapshot>>} s @param {Probe} probe @param {string} scratch
  */
-async function bundle(s, probe, scratch, id) {
-	if (probe.has === "1") return null;
-	// A bare repository whose alternates are the scratch objects and the checkout's: refs/heads/sync can
-	// be written there without touching the checkout's refs.
-	const bare = path.join(scratch, "bundle.git");
+async function pushSource(s, probe, scratch) {
+	const bare = path.join(scratch, "push.git");
 	const env = baseEnv();
 	await git(["init", "-q", "--bare", `--object-format=${s.format}`, bare], { env });
 	await writeFile(path.join(bare, "objects", "info", "alternates"), `${s.scratchObjects}\n${s.objects}\n`);
 	await git(["--git-dir", bare, "update-ref", "refs/heads/sync", s.snap], { env });
-	const have = [];
-	for (const c of new Set([probe.synced, probe.base, probe.head].filter(Boolean)))
-		if (await tryGit(["--git-dir", bare, "cat-file", "-e", `${c}^{commit}`], { env }) !== null) have.push(`^${c}`);
-	// The bundle carries every commit the VM lacks, not just the snapshot: refuse a credential anywhere in them.
-	const history = (await git(["--git-dir", bare, "log", "--format=", "--name-only", "--no-renames", "-z", "refs/heads/sync", ...have], { env })).split("\0").map((p) => p.trim()).filter(Boolean);
+	// Tips this repository doesn't have are skipped: then nothing they reach is excluded, which only errs
+	// towards refusing.
+	const tips = [...new Set([probe.synced, probe.base, probe.head, ...probe.tip].filter((t) => t && /^[0-9a-f]{40,64}$/.test(t)))];
+	const history = (await git(["--git-dir", bare, "log", "--format=", "--name-only", "--no-renames", "-z", "--ignore-missing", "--stdin"], { env, input: `refs/heads/sync\n--not\n${tips.join("\n")}\n` }))
+		.split("\0").map((p) => p.trim()).filter(Boolean);
 	const leaked = [...new Set(history.filter(deniedSyncPath))];
 	if (leaked.length)
 		throw new Error(`vm_sync refused: ${leaked.slice(0, 5).join(", ")} is in the history this sync would send (a commit the VM lacks has it), and vm_sync never puts credential files on a VM's disk. ` +
 			"It's not in your working tree, but its old contents are in that commit. Remove it from history (git rebase / git filter-repo) before syncing, and ask for the credential with vm_grant. Nothing in the VM was changed.");
-	const file = path.join(scratch, "out", `sync-${id}.bundle`);
-	await mkdir(path.dirname(file));
-	try {
-		await git(["--git-dir", bare, "bundle", "create", "-q", file, "refs/heads/sync", ...have], { env });
-	} catch (e) {
-		// "empty bundle": everything is reachable from what the VM has; send the snapshot whole instead.
-		if (!have.length || !/empty bundle/.test(/** @type {Error} */ (e).message)) throw e;
-		await git(["--git-dir", bare, "bundle", "create", "-q", file, "refs/heads/sync"], { env });
-	}
-	return file;
+	return bare;
+}
+
+/**
+ * git push the snapshot into the VM repository at `dest`, to a hidden ref. receive-pack quarantines
+ * incoming objects until the ref update succeeds, so a cancelled push leaves nothing behind. No hooks run
+ * on either side, and the push goes only to this VM, over its own ssh_config.
+ * → objects sent (null if git didn't say: nothing to send, or no progress line).
+ * @param {string} bare @param {string} vm @param {string} sshConf @param {string} dest @param {string} ref @param {AbortSignal} [signal]
+ * @returns {Promise<number | null>}
+ */
+function push(bare, vm, sshConf, dest, ref, signal) {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) return reject(aborted());
+		const env = { ...baseEnv(), GIT_SSH_COMMAND: `ssh -F ${q(sshConf)} -o BatchMode=yes`, GIT_SSH_VARIANT: "ssh" };
+		const args = [...SAFE_CONFIG, "-c", "protocol.ssh.allow=always", "--git-dir", bare, "push", "--progress", "--no-verify", "--no-signed", "--no-recurse-submodules", "--no-follow-tags",
+			"--receive-pack=git -c core.hooksPath=/dev/null receive-pack", `${vm}.boxery:${dest}`, `+refs/heads/sync:${ref}`];
+		// Its own process group, so cancelling stops git, its ssh and pack-objects together.
+		const child = spawn("git", args, { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
+		let stderr = "";
+		child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-64 * 1024); });
+		const stop = () => { try { process.kill(-(/** @type {number} */ (child.pid)), "SIGTERM"); } catch {} };
+		signal?.addEventListener("abort", stop, { once: true });
+		child.on("error", (e) => { signal?.removeEventListener("abort", stop); reject(new Error(`git push: ${e.message}`)); });
+		child.on("close", (code) => {
+			signal?.removeEventListener("abort", stop);
+			if (signal?.aborted) return reject(aborted());
+			if (code !== 0) {
+				const lines = stderr.split(/[\r\n]+/).filter((l) => l && !/^(Enumerating|Counting|Delta|Compressing|Writing|Total) /.test(l));
+				return reject(new Error(`vm_sync: git push to VM "${vm}" failed: ${lines.join("\n").trim() || `exit ${code}`}; nothing in the checkout was changed`));
+			}
+			const m = /Writing objects: 100% \((\d+)\/\d+\)/.exec(stderr);
+			resolve(m ? Number(m[1]) : null);
+		});
+	});
 }
 
 /**
@@ -251,8 +277,7 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 	if (signal?.aborted) throw aborted();
 	const id = randomBytes(8).toString("hex");
 	const scratch = await mkdtemp(path.join(tmpdir(), "boxery-sync-"));
-	const remoteBundle = `${REMOTE_HOME}/.cache/boxery/sync-${id}.bundle`;
-	let sent = false;
+	const ref = `refs/boxery/incoming/${id}`;
 	try {
 		const s = await snapshot(fromPath, scratch, confined);
 		refuseCredentials(s.root, s.files, local ? local.deny : undefined);
@@ -267,19 +292,21 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 			throw new Error(`vm_sync refused: ${label} has changes ${what} that vm_sync didn't make:\n${probe.changed.map((c) => `  ${c.replace("\t", " ")}`).join("\n")}\n` +
 				"Commit them in the VM and bring them back yourself, or discard them (git -C DIR stash -u, or checkout/clean), then sync again. Nothing in the VM was changed.");
 		}
-		const file = await bundle(s, probe, scratch, id);
-		let bytes = 0;
-		if (file) {
-			sent = true;
-			bytes = await streamCopy({ path: file, label: "local" }, { path: remoteBundle, vm, sshConf: host.sshConf, label: `${host.name}/${vm}` }, { signal });
+		const pushed = probe.has !== "1";
+		let objects = 0;
+		if (pushed) {
+			const bare = await pushSource(s, probe, scratch);
+			if (signal?.aborted) throw aborted();
+			// receive-pack needs a repository: create one in a missing or empty directory (only that).
+			if (probe.state !== "repo") await guest(vm, { MODE: "init", DIR: dest, FORMAT: s.format });
+			objects = (await push(bare, vm, host.sshConf, dest, ref, signal)) ?? 0;
 		}
 		// The last point to stop: past here the VM applies the snapshot completely or not at all.
 		if (signal?.aborted) throw aborted();
 		const applied = await guest(vm, {
-			MODE: "apply", DIR: dest, FORMAT: s.format, BUNDLE: file ? remoteBundle : "", SNAP: s.snap, HEAD_SHA: s.head, TREE: s.tree,
+			MODE: "apply", DIR: dest, SNAP: s.snap, HEAD_SHA: s.head, TREE: s.tree,
 			EXPECT_SYNCED: probe.synced ?? "", EXPECT_HEAD: probe.head ?? "",
 		});
-		sent = false; // apply removed the bundle
 		const match = applied.tree === s.tree;
 		const lockfileChanged = applied.lockfile_changed === "1";
 		const short = s.head.slice(0, 7), { modified, untracked, deleted } = s.counts;
@@ -292,12 +319,11 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 			structured: {
 				vm, host: host.name, from: s.root, to: dest, sha: s.head, snapshot: s.snap,
 				counts: s.counts, tree: { local: s.tree, vm: applied.tree ?? null, match },
-				lockfile_changed: lockfileChanged, transferred_bytes: bytes, elapsed_ms: Date.now() - started,
+				lockfile_changed: lockfileChanged, pushed, objects_sent: objects, elapsed_ms: Date.now() - started,
 			},
 		};
 	} finally {
-		// A bundle the transfer left but apply never consumed (cancelled or refused before it ran) is removed.
-		if (sent) await sshRun(vm, `rm -f ${q(remoteBundle)}`, { timeoutMs: 15_000 }).catch(() => {});
+		// (A pushed ref apply never reached is harmless; the next successful apply drops every incoming ref.)
 		await rm(scratch, { recursive: true, force: true });
 	}
 }
@@ -313,7 +339,8 @@ export const SYNC_OUTPUT = {
 		counts: { type: "object", properties: { modified: { type: "integer" }, untracked: { type: "integer" }, deleted: { type: "integer" } } },
 		tree: { type: "object", description: "git tree of the whole working directory (tracked + untracked, not ignored), computed on each side", properties: { local: { type: "string" }, vm: { type: ["string", "null"] }, match: { type: "boolean" } } },
 		lockfile_changed: { type: "boolean", description: `a lockfile (${LOCKFILES.join(", ")}) differs from the previous sync: dependencies need installing` },
-		transferred_bytes: { type: "integer", description: "bytes of bundle sent (0: the VM had every commit)" },
+		pushed: { type: "boolean", description: "false: the VM already had the snapshot, so nothing was pushed" },
+		objects_sent: { type: "integer", description: "git objects the push sent (0 when nothing was pushed)" },
 		elapsed_ms: { type: "integer" },
 	},
 };

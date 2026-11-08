@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # vm_sync, the VM side. core/sync.mjs sends this text with every call (it is never installed), after
-# assignments to MODE (probe | apply), DIR, for probe WANT, and for apply: FORMAT BUNDLE SNAP HEAD_SHA
-# TREE EXPECT_SYNCED EXPECT_HEAD. It never contacts a git remote. Output: key=value lines on stdout.
+# assignments to MODE (probe | init | apply), DIR, for probe WANT, for init FORMAT, and for apply: SNAP
+# HEAD_SHA TREE EXPECT_SYNCED EXPECT_HEAD. Commits arrive between probe and apply by git push (to
+# refs/boxery/incoming/*), never through this script. It never contacts a git remote. Output: key=value lines on stdout.
 # Exit 3: refused (the reason on stderr); the checkout is as it was. Exit 1: failed; apply has restored
 # the checkout it found, or says it couldn't.
 #
@@ -85,6 +86,8 @@ probe() {
 	echo "base=$(rev refs/boxery/base)"
 	echo "head=$(rev HEAD)"
 	[ -z "${WANT:-}" ] || ! git cat-file -e "$WANT^{commit}" 2>/dev/null || echo has=1
+	# What the VM has, so the caller can tell which commits a push would send (and check them).
+	git for-each-ref --count=500 --format='tip=%(objectname)' 2>/dev/null
 	if [ -f "$G/boxery-sync-pending" ]; then echo pending=1; return; fi
 	local b w
 	b=$(baseline) || die "cannot read the last sync's state in $DIR"
@@ -94,15 +97,30 @@ probe() {
 	[ "$w" = "$b" ] || worktree_changes "$b" | sed 's/^/changed=/'
 }
 
+# A repository for git push to land in, in a missing or empty directory only.
+init() {
+	: "${FORMAT:?}"
+	if [ -d "$DIR" ] && [ -n "$(ls -A "$DIR")" ]; then
+		cd "$DIR" && is_repo_root && return 0
+		refuse "$DIR is not a git repository and is not empty"
+	fi
+	mkdir -p "$DIR" && cd "$DIR" || die "cannot create $DIR"
+	git init -q --object-format="$FORMAT" || die "git init failed in $DIR"
+}
+
 # Put back tree $1 where tree $2 was swapped in (or half swapped in), and the index found before.
 rollback() {
 	GIT_INDEX_FILE="$G/boxery-sync-index" git read-tree "$2" &&
 		GIT_INDEX_FILE="$G/boxery-sync-index" git read-tree --reset -u "$2" "$1" || return 1
 	restore_index
 }
+# Refs git push left (this sync's, and any an earlier cancelled one did).
+drop_incoming() {
+	git for-each-ref --format='delete %(refname)' refs/boxery/incoming/ 2>/dev/null | git update-ref --stdin 2>/dev/null || true
+}
 restore_index() {
 	if [ -f "$G/boxery-sync-index.bak" ]; then mv -f "$G/boxery-sync-index.bak" "$IDX"; else rm -f "$IDX"; fi
-	git update-ref -d refs/boxery/incoming 2>/dev/null
+	drop_incoming
 	rm -f "$G/boxery-sync-index" "$G/boxery-sync-pending"
 }
 # A swap a crash interrupted: done if its refs were written, otherwise undone, but only if every file it
@@ -162,19 +180,13 @@ swap() {
 }
 
 apply() {
-	: "${FORMAT:?}" "${SNAP:?}" "${HEAD_SHA:?}" "${TREE:?}" "${BUNDLE?}" "${EXPECT_SYNCED?}" "${EXPECT_HEAD?}"
+	: "${SNAP:?}" "${HEAD_SHA:?}" "${TREE:?}" "${EXPECT_SYNCED?}" "${EXPECT_HEAD?}"
 	# Past this point the caller has committed: finish or roll back, even if it cancels or disconnects.
 	trap '' INT TERM HUP PIPE
 	LOCKDIR=""
-	trap 'rm -f "${BUNDLE:-/nonexistent}"; [ -z "$LOCKDIR" ] || rmdir "$LOCKDIR" 2>/dev/null' EXIT
-	if [ ! -d "$DIR" ] || [ -z "$(ls -A "$DIR")" ]; then
-		[ -z "$EXPECT_HEAD$EXPECT_SYNCED" ] || refuse "the checkout in $DIR changed during the sync; run it again"
-		mkdir -p "$DIR" && cd "$DIR" || die "cannot create $DIR"
-		git init -q --object-format="$FORMAT" || die "git init failed in $DIR"
-	else
-		cd "$DIR" || die "cannot enter $DIR"
-		is_repo_root || refuse "$DIR is not a git repository and is not empty"
-	fi
+	trap '[ -z "$LOCKDIR" ] || rmdir "$LOCKDIR" 2>/dev/null' EXIT
+	cd "$DIR" 2>/dev/null || refuse "$DIR is gone"
+	is_repo_root || refuse "$DIR is not a git repository"
 	setup_git
 	if command -v flock >/dev/null; then
 		exec 9>"$G/boxery-sync.lock"
@@ -194,16 +206,11 @@ apply() {
 	b=$(baseline) || die "cannot read the last sync's state in $DIR"
 	w=$(wt "$b") || die "cannot read the working directory of $DIR"
 	[ "$w" = "$b" ] || refuse "uncommitted changes appeared in $DIR during the sync; run it again"
-	if [ -n "$BUNDLE" ]; then
-		git bundle verify -q "$BUNDLE" >/dev/null 2>&1 || die "the bundle doesn't apply to the VM's repository"
-		git fetch -q --no-tags --no-write-fetch-head "$BUNDLE" "+refs/heads/sync:refs/boxery/incoming" || die "git fetch from the bundle failed"
-		rm -f "$BUNDLE"
-	fi
-	git cat-file -e "$SNAP^{commit}" 2>/dev/null || die "the VM lacks commit $SNAP after the transfer"
+	git cat-file -e "$SNAP^{commit}" 2>/dev/null || die "the VM lacks commit $SNAP after the push"
 	new=$(git rev-parse "$SNAP^{tree}") || die "cannot read $SNAP"
 	hit=$(clobbered "$b" "$new" | head -n 20) || die "cannot compare the new tree with $DIR"
 	if [ -n "$hit" ]; then
-		git update-ref -d refs/boxery/incoming 2>/dev/null
+		drop_incoming
 		refuse "the local checkout now tracks paths that exist in the VM as ignored files (build output, dependencies), which the sync would overwrite or delete: $(printf '%s\n' "$hit" | tr '\n' ' ')
 Remove them in the VM (or stop tracking them locally), then sync again"
 	fi
@@ -230,11 +237,12 @@ Remove them in the VM (or ignore them locally), then sync again" ;;
 	esac
 	# The index holds local HEAD, so `git status` in the VM shows the working changes, as it does locally.
 	if ! { git read-tree "$HEAD_SHA" && printf '%s\n' 'option no-deref' "update HEAD $HEAD_SHA" "update refs/boxery/synced $SNAP" \
-		"update refs/boxery/base $HEAD_SHA" 'delete refs/boxery/incoming' | git update-ref -m "boxery sync" --stdin; }; then
+		"update refs/boxery/base $HEAD_SHA" | git update-ref -m "boxery sync" --stdin; }; then
 		rollback "$b" "$new" || die "the sync failed and the checkout in $DIR could not be restored; see $G/boxery-sync-pending"
 		die "the sync failed writing refs; the checkout in $DIR was restored"
 	fi
 	git update-index -q --refresh >/dev/null 2>&1
+	drop_incoming
 	rm -f "$G/boxery-sync-pending" "$G/boxery-sync-index" "$G/boxery-sync-index.bak"
 	echo "lockfile_changed=$lock"
 	echo "tree=$RESULT"
@@ -242,6 +250,7 @@ Remove them in the VM (or ignore them locally), then sync again" ;;
 
 case "$MODE" in
 probe) probe ;;
+init) init ;;
 apply) apply ;;
 *) die "unknown mode $MODE" ;;
 esac

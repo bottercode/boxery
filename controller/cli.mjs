@@ -544,7 +544,7 @@ export const COMMANDS = {
 		help: {
 			group: "use", summary: "push a local git checkout into a VM, so its tree matches exactly", usage: ["sync NAME [--from DIR] [--to PATH] [--json]"],
 			details: [
-				"Sends the commits the VM lacks as a git bundle, checks out the same commit (detached) and applies staged, unstaged and untracked changes, deletions included. Ignored files in the VM (node_modules, builds) stay. No git remote or GitHub access is needed on either side.",
+				"git pushes the commits the VM lacks over its ssh connection, checks out the same commit (detached) and applies staged, unstaged and untracked changes, deletions included. Ignored files in the VM (node_modules, builds) stay. No git remote or GitHub access is needed on either side.",
 				"Refuses, changing nothing, when the VM checkout has changes the last sync didn't make, or the checkout holds a credential file (.env, .npmrc, auth files).",
 			],
 			flags: [["--from DIR", "Local checkout (default: the current directory)"], ["--to PATH", "VM directory (default ~/project; relative paths are under it)"], ["--json", "Print the result as JSON"]],
