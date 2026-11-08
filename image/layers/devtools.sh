@@ -82,6 +82,9 @@ if ! as_agent node --experimental-strip-types --disable-warning=ExperimentalWarn
 	# Download, check against the release's SHASUMS256.txt, then unpack: never pipe an unchecked tarball into tar.
 	curl -fsSL -o "$NODE_DL/${NODE_SUM##* }" "https://nodejs.org/dist/latest-v24.x/${NODE_SUM##* }"
 	(cd "$NODE_DL" && printf '%s\n' "$NODE_SUM" | sha256sum -c --quiet -) || { echo "Node tarball failed its checksum" >&2; exit 1; }
+	# Remove the npm and corepack that came with the old node first: unpacked over them, files the new
+	# release dropped stay behind and shadow its own (a stale nested minipass breaks every npm command).
+	rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
 	tar -xJf "$NODE_DL/${NODE_SUM##* }" -C /usr/local --strip-components=1
 	mkdir -p /etc/boxery && touch /etc/boxery/node-installed
 fi
