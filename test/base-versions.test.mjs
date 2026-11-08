@@ -32,7 +32,7 @@ test("concurrent base builds get private user-data and cleanup on success or fai
 		assert.ok(files.every((f) => !existsSync(f)));
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
-test("libvirt builds private immutable volumes, publishes only success and retains old backing disks", () => {
+test("libvirt builds private immutable volumes, publishes only success and retains old backing disks", { skip: process.platform !== "linux" }, () => {
 	const dir = mkdtempSync(path.join(tmpdir(), "boxery-base-versions-"));
 	try {
 		const out = execFileSync("bash", ["-euo", "pipefail", "-c", `
