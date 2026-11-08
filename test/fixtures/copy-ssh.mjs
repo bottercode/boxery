@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 const HELPER = fileURLToPath(new URL("./copy-helper.mjs", import.meta.url));
 const args = process.argv.slice(2);
+const argv = [...args];
 let conf, vm;
 while (args.length > 1) {
 	const flag = /** @type {string} */ (args.shift());
@@ -18,7 +19,7 @@ if (!["alpha", "beta", "gamma"].includes(host) || !["vm", "other"].includes(/** 
 const endpoint = `${host}/${vm}`;
 const root = path.join(/** @type {string} */ (process.env.COPY_ROOT), "vms", host, /** @type {string} */ (vm));
 const script = args[0].replaceAll("/home/agent", root).replaceAll("/tmp/.boxery-copy-", `${root}/tmp/.boxery-copy-`);
-appendFileSync(/** @type {string} */ (process.env.COPY_LOG), JSON.stringify({ kind: "ssh", endpoint, script, pid: process.pid }) + "\n");
+appendFileSync(/** @type {string} */ (process.env.COPY_LOG), JSON.stringify({ kind: "ssh", endpoint, script, pid: process.pid, argv }) + "\n");
 const cleanup = script.includes('for record in "$t"/pgid.') && !script.includes("setsid -w");
 if (process.env.COPY_FAIL_CLEANUP === endpoint && cleanup) {
 	process.stderr.write("injected cleanup connection failure\n"); process.exit(255);

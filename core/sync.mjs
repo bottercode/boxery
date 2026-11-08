@@ -5,7 +5,7 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { q } from "./shell.mjs";
@@ -43,19 +43,22 @@ export function deniedSyncPath(p) {
 
 const IDENTITY = { GIT_AUTHOR_NAME: "boxery sync", GIT_AUTHOR_EMAIL: "sync@boxery.invalid", GIT_AUTHOR_DATE: "@0 +0000" };
 const COMMITTER = { GIT_COMMITTER_NAME: IDENTITY.GIT_AUTHOR_NAME, GIT_COMMITTER_EMAIL: IDENTITY.GIT_AUTHOR_EMAIL, GIT_COMMITTER_DATE: IDENTITY.GIT_AUTHOR_DATE };
-// Repository-locating variables from the caller's environment would point git elsewhere.
-const GIT_LOCATION = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE"];
-// No lazy fetches from a partial clone's promisor remote: vm_sync never contacts a remote.
+// No GIT_* variable from the caller's environment reaches git: they relocate the repository, inject config
+// (GIT_CONFIG_COUNT/PARAMETERS, so url rewrites), or change which transports are allowed. No lazy fetches
+// from a partial clone's promisor remote either: vm_sync never contacts a remote.
+/** @returns {NodeJS.ProcessEnv} */
 const baseEnv = () => {
-	/** @type {NodeJS.ProcessEnv} */
-	const env = { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" };
-	for (const k of GIT_LOCATION) delete env[k];
-	return env;
+	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+	return { ...env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" };
 };
-// A confined server (HTTP MCP with --copy-root) reads a checkout an agent may have written: git must not
-// run anything that checkout's config names (fsmonitor, hooks, filter drivers) or look outside the root.
-const SAFE_CONFIG = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"];
-const aborted = () => Object.assign(new Error("sync aborted; the VM was not changed"), { name: "AbortError" });
+// The push and its scratch repository read no user or system config: a url.insteadOf/pushInsteadOf would
+// send the snapshot somewhere else (another VM), push.* options change the push. (The snapshot itself keeps
+// the user's config: core.excludesFile decides what's untracked.)
+const isolatedEnv = () => ({ ...baseEnv(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
+// git must not run anything a checkout's config names (fsmonitor, hooks; filter drivers are refused when
+// confined) or write a split index into the checkout's .git.
+const SAFE_CONFIG = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.splitIndex=false", "-c", "protocol.allow=never"];
+const aborted = () => Object.assign(new Error("sync aborted; the VM checkout was not changed"), { name: "AbortError" });
 
 /** Run git locally → stdout. @param {string[]} args @param {{ cwd?: string, env?: NodeJS.ProcessEnv, input?: string }} [opts] @returns {Promise<string>} */
 function git(args, { cwd, env = baseEnv(), input } = {}) {
@@ -148,6 +151,8 @@ async function snapshot(from, scratch, confined) {
 	if (!head) throw new Error(`${root} has no commits yet; commit once before syncing (vm_sync needs a HEAD to check out)`);
 	if (await tryGit(["rev-parse", "--is-shallow-repository"], { cwd: root, ...g0 }) === "true")
 		throw new Error(`${root} is a shallow clone; vm_sync sends history the VM lacks and can't from a shallow one. Run git fetch --unshallow first`);
+	if (await tryGit(["config", "--get-regexp", "^(extensions\\.partialclone|remote\\..*\\.promisor)$"], { cwd: root, ...g0 }))
+		throw new Error(`${root} is a partial clone (objects are missing until fetched from its remote); vm_sync never contacts a remote and can't send objects it doesn't have`);
 	const format = (await git(["rev-parse", "--show-object-format"], { cwd: root, ...g0 })).trim();
 	const objects = (await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: root, ...g0 })).trim();
 	const index = (await git(["rev-parse", "--path-format=absolute", "--git-path", "index"], { cwd: root, ...g0 })).trim();
@@ -155,7 +160,13 @@ async function snapshot(from, scratch, confined) {
 	await mkdir(scratchObjects);
 	const scratchIndex = path.join(scratch, "index");
 	let haveIndex = true;
-	try { await writeFile(scratchIndex, readFileSync(index)); } catch (e) { if (/** @type {any} */ (e).code !== "ENOENT") throw e; haveIndex = false; }
+	try {
+		// Keep the index's mtime: git re-checks entries modified in the same second as the index was
+		// written ("racy" entries) by comparing with it. A newer copy would make such an edit look clean.
+		await copyFile(index, scratchIndex);
+		const st = await stat(index);
+		await utimes(scratchIndex, st.atime, st.mtime);
+	} catch (e) { if (/** @type {any} */ (e).code !== "ENOENT") throw e; haveIndex = false; }
 	const env = { ...env0, GIT_INDEX_FILE: scratchIndex, GIT_OBJECT_DIRECTORY: scratchObjects, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
 	if (!haveIndex) await git(["read-tree", "HEAD"], { cwd: root, env });
 	await git(["add", "-A"], { cwd: root, env });
@@ -203,23 +214,26 @@ function refuseCredentials(root, files, deny) {
  * A bare scratch repository to push from: its alternates are the scratch objects and the checkout's, so
  * refs/heads/sync can point at the snapshot without touching the checkout's refs. Refuses a credential
  * anywhere in the commits the VM may lack (those not reachable from its ref tips), not just the snapshot.
- * @param {Awaited<ReturnType<typeof snapshot>>} s @param {Probe} probe @param {string} scratch
+ * @param {Awaited<ReturnType<typeof snapshot>>} s @param {Probe} probe @param {string} scratch @param {string[]} [deny]
  */
-async function pushSource(s, probe, scratch) {
+async function pushSource(s, probe, scratch, deny) {
 	const bare = path.join(scratch, "push.git");
-	const env = baseEnv();
+	const env = isolatedEnv();
 	await git(["init", "-q", "--bare", `--object-format=${s.format}`, bare], { env });
 	await writeFile(path.join(bare, "objects", "info", "alternates"), `${s.scratchObjects}\n${s.objects}\n`);
 	await git(["--git-dir", bare, "update-ref", "refs/heads/sync", s.snap], { env });
-	// Tips this repository doesn't have are skipped: then nothing they reach is excluded, which only errs
-	// towards refusing.
+	// What the push will send: every object reachable from the snapshot and not from what the VM has (by
+	// path, so merges and roots count too). Tips this repository doesn't have are skipped: then nothing they
+	// reach is excluded, which only errs towards refusing. The tips are the VM's own report (probe), so this
+	// trusts the VM to say what it has; see docs/sync.md.
 	const tips = [...new Set([probe.synced, probe.base, probe.head, ...probe.tip].filter((t) => t && /^[0-9a-f]{40,64}$/.test(t)))];
-	const history = (await git(["--git-dir", bare, "log", "--format=", "--name-only", "--no-renames", "-z", "--ignore-missing", "--stdin"], { env, input: `refs/heads/sync\n--not\n${tips.join("\n")}\n` }))
-		.split("\0").map((p) => p.trim()).filter(Boolean);
-	const leaked = [...new Set(history.filter(deniedSyncPath))];
+	const listed = await git(["--git-dir", bare, "rev-list", "--objects", "--ignore-missing", "--stdin"], { env, input: `refs/heads/sync\n--not\n${tips.join("\n")}\n` });
+	const history = [...new Set(listed.split("\n").map((l) => l.slice(l.indexOf(" ") + 1)).filter((p) => p && !/^[0-9a-f]{40,64}$/.test(p)))];
+	const leaked = history.filter(deniedSyncPath);
 	if (leaked.length)
 		throw new Error(`vm_sync refused: ${leaked.slice(0, 5).join(", ")} is in the history this sync would send (a commit the VM lacks has it), and vm_sync never puts credential files on a VM's disk. ` +
 			"It's not in your working tree, but its old contents are in that commit. Remove it from history (git rebase / git filter-repo) before syncing, and ask for the credential with vm_grant. Nothing in the VM was changed.");
+	refuseCredentials(s.root, history, deny);
 	return bare;
 }
 
@@ -234,17 +248,28 @@ async function pushSource(s, probe, scratch) {
 function push(bare, vm, sshConf, dest, ref, signal) {
 	return new Promise((resolve, reject) => {
 		if (signal?.aborted) return reject(aborted());
-		const env = { ...baseEnv(), GIT_SSH_COMMAND: `ssh -F ${q(sshConf)} -o BatchMode=yes`, GIT_SSH_VARIANT: "ssh" };
+		// ControlMaster=no, as vm_copy: reuse a shared connection, but never become the master inside the
+		// process group a cancel kills (other boxery calls would lose it).
+		const env = { ...isolatedEnv(), GIT_SSH_COMMAND: `ssh -F ${q(sshConf)} -o BatchMode=yes -o ControlMaster=no`, GIT_SSH_VARIANT: "ssh" };
 		const args = [...SAFE_CONFIG, "-c", "protocol.ssh.allow=always", "--git-dir", bare, "push", "--progress", "--no-verify", "--no-signed", "--no-recurse-submodules", "--no-follow-tags",
-			"--receive-pack=git -c core.hooksPath=/dev/null receive-pack", `${vm}.boxery:${dest}`, `+refs/heads/sync:${ref}`];
+			"--receive-pack=git -c core.hooksPath=/dev/null -c receive.autogc=false receive-pack", `${vm}.boxery:${dest}`, `+refs/heads/sync:${ref}`];
 		// Its own process group, so cancelling stops git, its ssh and pack-objects together.
 		const child = spawn("git", args, { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
 		let stderr = "";
 		child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-64 * 1024); });
-		const stop = () => { try { process.kill(-(/** @type {number} */ (child.pid)), "SIGTERM"); } catch {} };
+		/** @type {NodeJS.Timeout[]} */
+		const timers = [];
+		const group = (/** @type {NodeJS.Signals} */ sig) => { try { process.kill(-(/** @type {number} */ (child.pid)), sig); } catch {} };
+		// TERM, then KILL; and don't wait forever for stderr a descendant (a ProxyCommand) may still hold.
+		const stop = () => {
+			group("SIGTERM");
+			timers.push(setTimeout(() => group("SIGKILL"), 1000), setTimeout(() => child.stderr.destroy(), 3000));
+		};
 		signal?.addEventListener("abort", stop, { once: true });
 		child.on("error", (e) => { signal?.removeEventListener("abort", stop); reject(new Error(`git push: ${e.message}`)); });
 		child.on("close", (code) => {
+			for (const t of timers) clearTimeout(t);
+			if (signal?.aborted) group("SIGKILL");
 			signal?.removeEventListener("abort", stop);
 			if (signal?.aborted) return reject(aborted());
 			if (code !== 0) {
@@ -277,7 +302,9 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 	if (signal?.aborted) throw aborted();
 	const id = randomBytes(8).toString("hex");
 	const scratch = await mkdtemp(path.join(tmpdir(), "boxery-sync-"));
-	const ref = `refs/boxery/incoming/${id}`;
+	// The time in the name lets a later sync tell an abandoned ref from a concurrent one (snapshot commits
+	// carry a fixed date, so the commit can't say).
+	const ref = `refs/boxery/incoming/${Math.floor(Date.now() / 1000)}-${id}`;
 	try {
 		const s = await snapshot(fromPath, scratch, confined);
 		refuseCredentials(s.root, s.files, local ? local.deny : undefined);
@@ -295,16 +322,23 @@ export async function syncTool(vm, { from, to } = {}, { localCwd = process.cwd()
 		const pushed = probe.has !== "1";
 		let objects = 0;
 		if (pushed) {
-			const bare = await pushSource(s, probe, scratch);
+			const bare = await pushSource(s, probe, scratch, local ? local.deny : undefined);
 			if (signal?.aborted) throw aborted();
-			// receive-pack needs a repository: create one in a missing or empty directory (only that).
-			if (probe.state !== "repo") await guest(vm, { MODE: "init", DIR: dest, FORMAT: s.format });
-			objects = (await push(bare, vm, host.sshConf, dest, ref, signal)) ?? 0;
+			// receive-pack needs a repository: create one in a missing or empty directory (only that), and
+			// remove it again if the push doesn't land.
+			const created = probe.state !== "repo";
+			if (created) await guest(vm, { MODE: "init", DIR: dest, FORMAT: s.format });
+			try {
+				objects = (await push(bare, vm, host.sshConf, dest, ref, signal)) ?? 0;
+			} catch (e) {
+				if (created) await guest(vm, { MODE: "uninit", DIR: dest }).catch(() => {});
+				throw e;
+			}
 		}
 		// The last point to stop: past here the VM applies the snapshot completely or not at all.
 		if (signal?.aborted) throw aborted();
 		const applied = await guest(vm, {
-			MODE: "apply", DIR: dest, SNAP: s.snap, HEAD_SHA: s.head, TREE: s.tree,
+			MODE: "apply", DIR: dest, SNAP: s.snap, HEAD_SHA: s.head, TREE: s.tree, REF: pushed ? ref : "",
 			EXPECT_SYNCED: probe.synced ?? "", EXPECT_HEAD: probe.head ?? "",
 		});
 		const match = applied.tree === s.tree;

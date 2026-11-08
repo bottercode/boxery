@@ -2,7 +2,7 @@
 // "VM" is a directory, and its ssh runs scripts there with /home/agent mapped to it. No real VMs.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -449,4 +449,96 @@ test("confined: a filter driver in the checkout's config is refused", async () =
 	const r = /** @type {any} */ (await sync({ from: "repo", local: { root } }));
 	assert.equal(r.ok, false);
 	assert.match(r.error, /filter driver/);
+});
+
+test("an edit in the same second as the index was written, same size, is still seen on both sides", async () => {
+	// git trusts an entry's stat data unless the file changed in the same second as the index was written;
+	// a copy of the index with a newer mtime would hide such an edit. Pin both to one second to force it.
+	const T = new Date("2026-01-01T00:00:00Z");
+	const racy = (/** @type {string} */ root, /** @type {string} */ rel, /** @type {string} */ text) => {
+		git(root, "update-index", "-q", "--refresh");
+		utimesSync(path.join(root, rel), T, T);
+		git(root, "update-index", "-q", "--really-refresh");
+		utimesSync(path.join(root, ".git", "index"), T, T);
+		writeFileSync(path.join(root, rel), text);
+		utimesSync(path.join(root, rel), T, T);
+	};
+	await ok();
+	racy(vmProject(), "README.md", "HELLO\n"); // an agent edit in the VM
+	const blocked = /** @type {any} */ (await sync());
+	assert.equal(blocked.ok, false, "the VM edit was overlooked");
+	assert.match(blocked.error, /M README\.md/);
+	writeFileSync(path.join(vmProject(), "README.md"), "hello\n");
+	racy(repo, "README.md", "jello\n"); // a local edit
+	const r = await ok();
+	assert.equal(r.structured.counts.modified, 1, "the local edit was overlooked");
+	assert.equal(read(vmProject(), "README.md"), "jello\n");
+});
+
+test("a credential added and removed in merge commits blocks the sync", async () => {
+	git(repo, "checkout", "-q", "-b", "side");
+	write(repo, "side.txt", "x\n");
+	git(repo, "add", "-A");
+	git(repo, "commit", "-qm", "side");
+	git(repo, "checkout", "-q", "main");
+	git(repo, "merge", "-q", "--no-ff", "--no-commit", "side");
+	write(repo, ".env", "SECRET=1\n");
+	git(repo, "add", "-f", ".env");
+	git(repo, "commit", "-qm", "merge with a secret");
+	git(repo, "rm", "-q", ".env");
+	git(repo, "commit", "-qm", "drop it");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /\.env is in the history this sync would send/);
+});
+
+test("the push ignores the user's git config and GIT_* environment, and goes only to the VM", async () => {
+	await ok();
+	const hostile = path.join(dir, "hostile.gitconfig");
+	writeFileSync(hostile, '[url "other.boxery:"]\n\tpushInsteadOf = vm.boxery:\n\tinsteadOf = vm.boxery:\n[push]\n\tpushOption = x\n\tnegotiate = true\n');
+	Object.assign(env, { GIT_CONFIG_GLOBAL: hostile, GIT_ALLOW_PROTOCOL: "https", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "url.other.boxery:.pushInsteadOf", GIT_CONFIG_VALUE_0: "vm.boxery:" });
+	write(repo, "README.md", "changed\n");
+	const mark = readFileSync(path.join(dir, "calls"), "utf8").length;
+	let r;
+	try { r = await ok(); } finally {
+		for (const k of ["GIT_CONFIG_GLOBAL", "GIT_ALLOW_PROTOCOL", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]) delete env[k];
+	}
+	assert.equal(r.structured.tree.match, true);
+	assert.ok(!existsSync(path.join(dir, "vms", "alpha", "other", "project")), "nothing went to another VM");
+	const pushes = readFileSync(path.join(dir, "calls"), "utf8").slice(mark).split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => String(c.script).includes("receive-pack"));
+	assert.equal(pushes.length, 1);
+	assert.equal(pushes[0].endpoint, "alpha/vm");
+	assert.ok(pushes[0].argv.includes("ControlMaster=no"), "never becomes the shared connection's master");
+	assert.ok(pushes[0].argv.includes("BatchMode=yes"));
+	assert.match(pushes[0].script, /core\.hooksPath=\/dev\/null .*receive\.autogc=false receive-pack/);
+});
+
+test("a push that fails into a new directory leaves no repository behind", async () => {
+	writeFileSync(path.join(dir, "bin", "git"), `#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" != receive-pack ] || { echo "injected receive-pack failure" >&2; exit 1; }; done\nexec ${q(env.REAL_GIT ?? "git")} "$@"\n`, { mode: 0o755 });
+	env.FAKE_VM_PATH = env.PATH;
+	let r;
+	try { r = /** @type {any} */ (await sync({ to: "~/fresh/repo" })); } finally { unlinkSync(path.join(dir, "bin", "git")); delete env.FAKE_VM_PATH; }
+	assert.equal(r.ok, false);
+	assert.match(r.error, /git push to VM "vm" failed/);
+	assert.ok(!existsSync(path.join(dir, "vms", "alpha", "vm", "fresh", "repo")), "init undone");
+});
+
+test("a stale incoming ref from an abandoned sync is dropped; a recent one is kept", async () => {
+	await ok();
+	const head = git(vmProject(), "rev-parse", "HEAD");
+	git(vmProject(), "update-ref", "refs/boxery/incoming/1000-old", head);
+	git(vmProject(), "update-ref", `refs/boxery/incoming/${Math.floor(Date.now() / 1000)}-busy`, head);
+	write(repo, "README.md", "again\n");
+	await ok();
+	const refs = git(vmProject(), "for-each-ref", "--format=%(refname)", "refs/boxery/incoming/");
+	assert.doesNotMatch(refs, /1000-old/);
+	assert.match(refs, /-busy/);
+});
+
+test("a partial clone gives a clear error", async () => {
+	git(repo, "config", "extensions.partialClone", "origin");
+	git(repo, "config", "core.repositoryformatversion", "1");
+	const r = /** @type {any} */ (await sync());
+	assert.equal(r.ok, false);
+	assert.match(r.error, /partial clone/);
 });

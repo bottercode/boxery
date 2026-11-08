@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # vm_sync, the VM side. core/sync.mjs sends this text with every call (it is never installed), after
-# assignments to MODE (probe | init | apply), DIR, for probe WANT, for init FORMAT, and for apply: SNAP
-# HEAD_SHA TREE EXPECT_SYNCED EXPECT_HEAD. Commits arrive between probe and apply by git push (to
+# assignments to MODE (probe | init | uninit | apply), DIR, for probe WANT, for init FORMAT, and for apply:
+# SNAP HEAD_SHA TREE REF EXPECT_SYNCED EXPECT_HEAD. Commits arrive between probe and apply by git push (to
 # refs/boxery/incoming/*), never through this script. It never contacts a git remote. Output: key=value lines on stdout.
 # Exit 3: refused (the reason on stderr); the checkout is as it was. Exit 1: failed; apply has restored
 # the checkout it found, or says it couldn't.
@@ -12,6 +12,8 @@
 set -u -o pipefail
 : "${MODE:?}" "${DIR:?}"
 export LC_ALL=C GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_LFS_SKIP_SMUDGE=1
+# No hooks (update-ref runs reference-transaction) and no fsmonitor from the VM repository's config.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
 LOCKFILES=(':(glob)**/pnpm-lock.yaml' ':(glob)**/package-lock.json' ':(glob)**/yarn.lock' ':(glob)**/bun.lock')
 refuse() { printf '%s\n' "$*" >&2; exit 3; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
@@ -41,7 +43,9 @@ wt() {
 	local t rc
 	t=$(mktemp -d) || return 1
 	mkdir "$t/o"
-	[ ! -f "$IDX" ] || cp "$IDX" "$t/i"
+	# -p keeps the index's mtime: git re-checks entries changed in the same second as the index was written
+	# by comparing with it, and a newer copy would make such an edit look clean.
+	[ ! -f "$IDX" ] || cp -p "$IDX" "$t/i"
 	(
 		export GIT_INDEX_FILE="$t/i" GIT_OBJECT_DIRECTORY="$t/o" GIT_ALTERNATE_OBJECT_DIRECTORIES="$OBJ"
 		# One-tree --reset keeps the copied index's stat data for entries it doesn't change, so unchanged
@@ -108,15 +112,36 @@ init() {
 	git init -q --object-format="$FORMAT" || die "git init failed in $DIR"
 }
 
+# Undo init after a push that didn't land: remove the repository init made, if it is still just that (no
+# refs, no objects), and the directory if it is then empty.
+uninit() {
+	cd "$DIR" 2>/dev/null && is_repo_root || return 0
+	setup_git
+	[ -z "$(git for-each-ref --count=1)" ] || return 0
+	[ -z "$(find "$OBJ" -type f ! -path '*/info/*' 2>/dev/null | head -n 1)" ] || return 0
+	[ "$(ls -A)" = .git ] || return 0
+	rm -rf "$G" && cd / && rmdir "$DIR" 2>/dev/null
+	return 0
+}
+
 # Put back tree $1 where tree $2 was swapped in (or half swapped in), and the index found before.
 rollback() {
 	GIT_INDEX_FILE="$G/boxery-sync-index" git read-tree "$2" &&
 		GIT_INDEX_FILE="$G/boxery-sync-index" git read-tree --reset -u "$2" "$1" || return 1
 	restore_index
 }
-# Refs git push left (this sync's, and any an earlier cancelled one did).
+# The ref this sync's push wrote, and those of earlier syncs that never applied (over an hour old: not a
+# concurrent sync's).
 drop_incoming() {
-	git for-each-ref --format='delete %(refname)' refs/boxery/incoming/ 2>/dev/null | git update-ref --stdin 2>/dev/null || true
+	local cutoff; cutoff=$(( $(date +%s) - 3600 ))
+	{
+		[ -z "${REF:-}" ] || printf 'delete %s\n' "$REF"
+		git for-each-ref --format='%(refname)' refs/boxery/incoming/ 2>/dev/null | while read -r r; do
+			t=${r##*/}; t=${t%%-*}
+			case "$t" in '' | *[!0-9]*) t=0 ;; esac
+			[ "$r" = "${REF:-}" ] || [ "$t" -ge "$cutoff" ] || printf 'delete %s\n' "$r"
+		done
+	} | git update-ref --stdin 2>/dev/null || true
 }
 restore_index() {
 	if [ -f "$G/boxery-sync-index.bak" ]; then mv -f "$G/boxery-sync-index.bak" "$IDX"; else rm -f "$IDX"; fi
@@ -180,7 +205,7 @@ swap() {
 }
 
 apply() {
-	: "${SNAP:?}" "${HEAD_SHA:?}" "${TREE:?}" "${EXPECT_SYNCED?}" "${EXPECT_HEAD?}"
+	: "${SNAP:?}" "${HEAD_SHA:?}" "${TREE:?}" "${REF?}" "${EXPECT_SYNCED?}" "${EXPECT_HEAD?}"
 	# Past this point the caller has committed: finish or roll back, even if it cancels or disconnects.
 	trap '' INT TERM HUP PIPE
 	LOCKDIR=""
@@ -251,6 +276,7 @@ Remove them in the VM (or ignore them locally), then sync again" ;;
 case "$MODE" in
 probe) probe ;;
 init) init ;;
+uninit) uninit ;;
 apply) apply ;;
 *) die "unknown mode $MODE" ;;
 esac
