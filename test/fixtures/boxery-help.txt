@@ -9,7 +9,7 @@ Setup & hosts:
   build-base                    Build the host's desktop base image (one time, ~3 min)
 
 VMs:
-  ls                            List VMs with their shape, grants and guest software
+  ls                            List VMs: every host's, a section each (--host NAME: one)
   new NAME                      Create a VM
   start NAME                    Start a stopped VM (pins its ssh host key where it can)
   stop NAME                     Stop a VM

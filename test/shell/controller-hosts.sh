@@ -25,7 +25,7 @@ export PATH="$tmp/bin:$PATH"
 # The executable path is data, including an apostrophe, $, backticks, %, spaces and shell syntax.
 rel="bin/it's \$(touch NOT_EXECUTED) \`echo no\` % host"
 mkdir -p "$REMOTE_HOME/bin"
-printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo "demo running" ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; esac\n' >"$REMOTE_HOME/$rel"
+printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo '"'"'[{"name":"demo","state":"running"}]'"'"' ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; esac\n' >"$REMOTE_HOME/$rel"
 chmod +x "$REMOTE_HOME/$rel"
 # Before any host is registered nothing is routed anywhere.
 if "$CLI" ls >/dev/null 2>&1; then echo 'routed without a host' >&2; exit 1; fi
@@ -56,12 +56,34 @@ lines=$(wc -l <"$SSH_LOG")
 "$CLI" host add beta --config-dir "$import" >/dev/null
 [ "$(wc -l <"$SSH_LOG")" -eq "$lines" ]
 cmp "$import/config" "$tmp/config.before"; cmp "$import/ssh_config" "$tmp/ssh.before"
-"$CLI" --host beta ls | grep -q '^ls '
+"$CLI" --host beta shapes | grep -q '^shapes$'
 "$CLI" host use alpha
 cp "$BOXERY_HOME/default-host" "$tmp/default.before"
 if "$CLI" host use unknown >/dev/null 2>&1; then exit 1; fi
 cmp "$BOXERY_HOME/default-host" "$tmp/default.before"
 "$CLI" ls | grep -q '^demo '
+# Plain ls lists every host under one header, a section each, the default first; --host NAME ls just
+# that one, unheaded. A host that fails (beta's host is /bin/echo: no JSON) is reported, the others are
+# still listed, and ls exits 1.
+other="$tmp/other profile"
+mkdir -p "$other"
+printf '#!/bin/sh\necho '"'"'[{"name":"web","state":"shut off"}]'"'"'\n' >"$tmp/other-host"; chmod +x "$tmp/other-host"
+printf "HOST='local'\nHOST_BIN='%s'\n" "$tmp/other-host" >"$other/config"
+printf '# untouched ssh config\n' >"$other/ssh_config"
+"$CLI" host add gamma --config-dir "$other" >/dev/null
+if "$CLI" ls >"$tmp/ls.out" 2>"$tmp/ls.err"; then echo 'ls succeeded with a failing host' >&2; exit 1; fi
+[ "$(sed -n 1p "$tmp/ls.out")" = 'NAME  STATE     SSH  DISK  SHAPE  KIND     STATUS' ]
+[ "$(sed -n 2p "$tmp/ls.out")" = 'alpha (default): on user@fake' ]
+[ "$(grep -c '^NAME ' "$tmp/ls.out")" -eq 1 ]
+grep -q '^demo  running ' "$tmp/ls.out"; grep -q '^web   shut off ' "$tmp/ls.out"
+grep -A1 '^beta: on this machine$' "$tmp/ls.out" | grep -q '^(ls failed: see below)$'
+[ "$(grep -n '^gamma' "$tmp/ls.out" | cut -d: -f1)" -gt "$(grep -n '^beta' "$tmp/ls.out" | cut -d: -f1)" ]
+grep -q "^boxery: beta: host returned no JSON for 'ls --json'" "$tmp/ls.err"
+"$CLI" ls --running >"$tmp/ls.out" 2>/dev/null || true # (beta still fails)
+grep -A1 '^gamma' "$tmp/ls.out" | grep -q '^(no running VMs)$'
+if grep -q '^web ' "$tmp/ls.out"; then echo 'ls --running listed a stopped VM' >&2; exit 1; fi
+if "$CLI" --host alpha ls | grep -q '^alpha'; then echo 'headed a single-host ls' >&2; exit 1; fi
+"$CLI" host rm gamma >/dev/null
 "$CLI" host ls | grep -q "alpha.*\*"
 if "$CLI" host rm alpha >/dev/null 2>&1; then echo 'removed selected default' >&2; exit 1; fi
 "$CLI" host use beta
@@ -213,7 +235,7 @@ if [ -n "$p" ] && [ ! -f "$HOME/made-$p" ] && [ "$1" != init ]; then echo "no pr
 case $1 in
 init) [ "${3:-}" != broken ] || { echo "backend check failed" >&2; exit 1; }; : >"$HOME/made-$p" ;;
 add-key) cat >/dev/null ;;
-ls) echo "demo running ${p:-default}" ;;
+ls) echo "[{\"name\":\"demo\",\"state\":\"running\",\"shape\":\"${p:-default}\"}]" ;; # the profile, as its shape
 connect) printf 'CONNECTED:%s:%s:%s\n' "${p:-default}" "$2" "$3" ;;
 esac
 STUB
@@ -223,7 +245,7 @@ grep -qx -- '--profile gamma init --backend exe' "$PROFILE_LOG"
 grep -qx -- '--profile gamma add-key' "$PROFILE_LOG"
 printf '%s\n' "$out" | grep -q 'boxery --host gamma build-base'
 grep -qx "HOST_PROFILE='gamma'" "$BOXERY_HOME/profiles/gamma/config"
-"$CLI" --host gamma ls | grep -q '^demo running gamma '
+"$CLI" --host gamma ls | grep -q '^demo .* gamma '
 proxy=$("$REAL_SSH" -F "$BOXERY_HOME/profiles/gamma/ssh_config" -G demo.boxery | sed -n 's/^proxycommand //p')
 proxy=${proxy//%h/demo.boxery}; proxy=${proxy//%p/22}
 sh -c "$proxy" | grep -q '^CONNECTED:gamma:demo.boxery:22$'
@@ -231,7 +253,7 @@ sh -c "$proxy" | grep -q '^CONNECTED:gamma:demo.boxery:22$'
 : >"$PROFILE_LOG"
 "$CLI" host add gamma2 user@fake --host-bin '~/bin/profiled' --profile gamma >/dev/null
 if grep -q init "$PROFILE_LOG"; then echo '--profile ran init' >&2; exit 1; fi
-"$CLI" --host gamma2 ls | grep -q '^demo running gamma '
+"$CLI" --host gamma2 ls | grep -q '^demo .* gamma '
 for args in "--profile nosuch" "--backend broken" "--backend ../x" "--profile Bad"; do
 	# shellcheck disable=SC2086 # word-split on purpose
 	if "$CLI" host add delta user@fake --host-bin '~/bin/profiled' $args >/dev/null 2>&1; then echo "host add $args succeeded" >&2; exit 1; fi

@@ -79,20 +79,6 @@ async function cmdFork(s, args) {
 	await lc(() => lifecycle.forkVm(src, dsts, { ...size, grants: approved }, passthrough()));
 }
 
-/** ls [--json] [--refresh] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
-async function cmdLs(s, args) {
-	let json = false, refresh = false;
-	for (const a of args) { if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else usage("ls"); }
-	needHost(s);
-	if (json) {
-		/** @type {unknown[]} */
-		let vms;
-		try { vms = await lifecycle.listVms({ refresh }, { stderr: "inherit" }); } catch (e) { hostFailed(e); }
-		return say(vms.length ? `[\n${vms.map((v) => JSON.stringify(v)).join(",\n")}\n]` : "[]");
-	}
-	try { say(await lifecycle.listTable({ refresh }, { stderr: "inherit" })); } catch (e) { hostFailed(e); }
-}
-
 /** patch NAME|--all [--wait S] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdPatch(s, args) {
 	if (args[0] !== "--all") needVm(args[0]);
@@ -318,12 +304,13 @@ export const COMMANDS = {
 	// ------------------------------------------------ VMs
 	ls: {
 		help: {
-			group: "vms", summary: "list VMs with their shape, grants and guest software", usage: ["ls [--json] [--refresh]"],
-			details: ["The GUEST column is current, outdated or unknown: see boxery patch."],
-			flags: [JSON_FLAG, ["--refresh", "Read the guest software record from each running VM first"]],
-			seeAlso: ["patch"], docs: "cli.md#lifecycle",
+			group: "vms", summary: "list VMs: every host's, a section each (--host NAME: one)", usage: ["ls [--json] [--refresh] [--running]"],
+			details: ["One header for every host's rows. STATUS says what is worth knowing about a VM: its pool lease, outdated guest software (see boxery patch) and grants. Notes come after the table, on stderr; a host that can't be reached fails ls once the others are listed. --json lists one host."],
+			flags: [JSON_FLAG, ["--refresh", "Read the guest software record from each running VM first"], ["--running", "Only running VMs"]],
+			examples: [["Every host's VMs", "boxery ls"], ["One host's running VMs", "boxery --host hornet ls --running"]],
+			seeAlso: ["patch", "host"], docs: "cli.md#lifecycle",
 		},
-		run: cmdLs,
+		run: async (s, args) => (await import("./ls.mjs")).ls(s, args, { allHosts: false }),
 	},
 	list: { alias: "ls" },
 	new: {
@@ -664,7 +651,9 @@ async function main(argv) {
 		}
 	}
 	const entry = COMMANDS[cmd];
-	const command = "run" in entry ? entry.run : undefined;
+	// Plain `ls` lists every host; --host NAME ls just that one.
+	const command = cmd === "ls" && !explicit ? async (/** @type {Selected} */ s, /** @type {string[]} */ a) => (await import("./ls.mjs")).ls(s, a, { allHosts: true })
+		: "run" in entry ? entry.run : undefined;
 	if (!command) throw new CliError(unknownCommand(COMMANDS, word), 2);
 	const s = await select(name, dir);
 	await withHost(s.host, async () => {

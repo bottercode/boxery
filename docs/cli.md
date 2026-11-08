@@ -28,7 +28,7 @@ boxery --host hornet acquire                # pool lease on that host
 boxery host rm hornet                       # forget only; preserves VMs and profile data
 ```
 
-See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
+Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names registered for the same profile are listed once. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
 
 ### Backend discovery
 
@@ -48,7 +48,7 @@ boxery new demo                              # ~13 s   [--shape large] [--cpus N
 boxery new ci-1 --headless                   # no desktop, no build-base needed: ~50 s on Lima (see below)
 boxery build-base                            # the host's desktop base image (one time, ~3 min)
 boxery shapes [--json]                       # VM sizes the host offers (* = default); see Shapes
-boxery ls [--json] [--refresh]               # VMs, with their shape, grants and guest software (GUEST)
+boxery ls [--json] [--refresh] [--running]   # VMs on every host, grouped; STATUS: lease, outdated guest, grants
 boxery patch demo | --all [--wait S]         # update a VM's guest software to the host's image layers
 boxery start demo | stop demo
 boxery resize demo --cpus 8 --mem 16384      # [--disk GiB]; restarts a running VM
@@ -60,7 +60,7 @@ boxery pin demo [--from-guest]               # re-pin demo's ssh host key (a VM 
 
 **Host keys.** Every ssh to a VM checks its host key, which is pinned on the host when the VM is made ([security](security.md#vm-host-keys)). A VM made before that, or whose record was lost, fails with "Host key verification failed" until you run `boxery pin NAME`. That reads the key through the hypervisor (libvirt's guest agent) or the host's loopback endpoint (Lima, exe, boat). `--from-guest` instead trusts what the VM's ssh endpoint answers, once. `boxery start NAME` pins it automatically where it can.
 
-**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows the result in the GUEST column (`guest` in `--json`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. `ls` says which VMs are outdated and why on stderr.
+**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows `outdated guest (REASONS)` in its STATUS column when it is (`guest` in `--json`, with `status` `outdated`, `current` or `unknown`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. After the table, `ls` names the outdated VMs again on stderr with how to update them, and the running VMs not checked yet.
 
 `boxery patch NAME` updates a running VM in place: it copies the host's current image layers into the VM, runs the layers the VM has again (security updates and kernel with `apt-get full-upgrade`, and what the layers install outside apt: `playwright-core` and, on arm64, its Chromium; the pi and opencode CLIs; node 24), and restarts the VM if the updates ask to (its tmux sessions end; its grants are pushed again). It takes a few minutes, streams the layers' progress and logs everything to `/var/log/boxery-patch.log` in the VM. `--all` patches every running VM in turn, and says which it skipped (stopped VMs, pool VMs with a lease). A pool VM must be free: `patch` refuses one with a lease, or waits up to `--wait S` seconds for it to end; while it is patched no lease can start on it, and its clean image (`NAME@boxery-clean`) is captured again, so later leases start patched. **Snapshots and images are not patched**: `snaps` and `images` show their age and the guest software they hold, and a VM made or reverted from an outdated one is outdated until you patch it. A VM from a desktop base built before build records shows `unknown`; patching gives it a record. To patch the base itself, rebuild it (`boxery build-base`).
 
@@ -229,7 +229,7 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 
 | Command | What it does |
 |---|---|
-| `boxery ls [--json] [--refresh]` | List VMs with their shape, grants and guest software (also: `list`) [→](#lifecycle) |
+| `boxery ls [--json] [--refresh] [--running]` | List VMs: every host's, a section each (--host NAME: one) (also: `list`) [→](#lifecycle) |
 | `boxery new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless [--layers L,...]] [--grant SPEC]... [--agent-forward]`<br>`boxery new NAME --from VM@SNAP` | Create a VM [→](#lifecycle) |
 | `boxery start NAME` | Start a stopped VM (pins its ssh host key where it can) |
 | `boxery stop NAME` | Stop a VM |
@@ -399,7 +399,7 @@ Both `boxery` and `boxery-host` build JSON in Node; neither needs `jq`.
 
 #### `boxery ls --json`
 
-VMs on the host, plus the grants this machine has given each one.
+VMs on one host (the default, or `--host NAME`; text `ls` lists every host), plus the grants this machine has given each one. `--running` keeps only running VMs.
 
 ```json
 [

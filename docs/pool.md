@@ -60,7 +60,7 @@ free ──acquire──▶ acquiring ──▶ leased ──release / expiry / 
                                                                           └──fail──▶ broken
 ```
 
-`pool ls` and `ls` (its LEASE column, `lease.state` in `--json`) show these states.
+`pool ls` and `ls` (its STATUS column: `pool free`, `leased by HOLDER, 2h left`, …; `lease.state` in `--json`) show these states.
 
 To recover a `broken` VM, fix it, then run `boxery pool rm NAME && boxery pool add NAME`.
 
