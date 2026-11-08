@@ -111,7 +111,8 @@ test("metadata is parsed: list, images, endpoints, size, optional functions", as
 
 test("Lima starts and renders cloud-config with the host's Node when PATH node is unavailable", async () => {
 	stub("node", 'echo "node unavailable on PATH" >&2; exit 127');
-	stub("limactl", 'case "$1" in list) ;; start) printf "%s\\n" "$*" >"$START_LOG" ;; esac');
+	// The builder is listed once created: lima_start refuses an instance that doesn't exist (#209).
+	stub("limactl", 'case "$1" in list) [ ! -e "$START_LOG.created" ] || echo \'{"name":"boxery-base","status":"Stopped","vmType":"vz"}\' ;; create) touch "$START_LOG.created" ;; start) printf "%s\\n" "$*" >"$START_LOG" ;; esac');
 	stub("sandbox-exec", 'shift 2; exec "$@"');
 	stub("ssh", 'case "$*" in *"sudo bash -s") cat >"$RENDERED" ;; esac');
 	const userdata = path.join(dir, "user-data.yaml");

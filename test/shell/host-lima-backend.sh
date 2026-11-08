@@ -51,6 +51,19 @@ BOXERY_LIMA_CONFINE=1 "$B" backend_start q1 && grep -q '^limactl start boxery-q1
 : >"$CALLS"; inst r1 vz Running
 BOXERY_LIMA_CONFINE=1 "$B" backend_start r1 && ! grep -q 'start\|sandbox-exec' "$CALLS" && ok "a running instance is left alone" || bad "running: $(cat "$CALLS")"
 
+# --- an unknown instance is never started: limactl would create it from Lima's default template (#209)
+for c in 1 0; do
+	: >"$CALLS"
+	if ! BOXERY_LIMA_CONFINE=$c "$B" backend_start nosuch 2>"$tmp/err" && grep -q 'no such vm: nosuch' "$tmp/err" && ! grep -q 'start\|sandbox-exec' "$CALLS"; then
+		ok "backend_start of an unknown VM fails without limactl start (confine=$c)"
+	else bad "backend_start nosuch (confine=$c): $(cat "$tmp/err") / $(cat "$CALLS")"; fi
+	: >"$CALLS"
+	got=$(BOXERY_LIMA_CONFINE=$c bash -c 'die() { exit 1; }; log() { :; }; . "$1/host/backends/lima.sh"; lima_start boxery-nosuch 10m && echo started' _ "$ROOT" 2>&1 || true)
+	[[ $got == *"no Lima instance boxery-nosuch"* ]] && ! grep -q 'start\|sandbox-exec' "$CALLS" && ok "lima_start refuses an unknown instance (confine=$c)" || bad "lima_start nosuch (confine=$c): $got / $(cat "$CALLS")"
+done
+: >"$CALLS"
+! "$B" backend_stop nosuch 2>"$tmp/err" && grep -q 'no such vm: nosuch' "$tmp/err" && ! grep -q 'limactl stop' "$CALLS" && ok "backend_stop of an unknown VM fails without limactl stop" || bad "backend_stop nosuch: $(cat "$tmp/err") / $(cat "$CALLS")"
+
 # --- confinement off (Linux)
 : >"$CALLS"; inst v2 vz Stopped
 BOXERY_LIMA_CONFINE=0 "$B" backend_start v2 && grep -q '^limactl start boxery-v2 --timeout 10m$' "$CALLS" && ! grep -q sandbox-exec "$CALLS" &&

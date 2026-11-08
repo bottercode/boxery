@@ -60,8 +60,11 @@ lima_profile() { # SSH_PORT → Seatbelt profile (later rules win)
 	printf '(allow network-outbound (remote ip "localhost:%s"))\n' "$PROXY_PORT" "$1"
 }
 lima_start() { # INSTANCE TIMEOUT: start it (nothing to do if it runs), confined on macOS
-	local i=$1 port args=()
-	[[ $(lima_status "$i") != Running ]] || return 0
+	local i=$1 st port args=()
+	# limactl start of an unknown instance creates one from Lima's default template, which mounts ~ (#209).
+	st=$(lima_status "$i")
+	[[ -n $st ]] || { echo "boxery-host: no Lima instance $i" >&2; return 1; }
+	[[ $st != Running ]] || return 0
 	if [[ $LIMA_CONFINE != 1 ]]; then limactl start "$i" --timeout "$2"; return; fi
 	port=$(lima_free_port) && [[ $port =~ ^[0-9]+$ ]] || { echo "boxery-host: no free port for $i's ssh" >&2; return 1; }
 	args=(--ssh-port "$port")
@@ -237,8 +240,8 @@ backend_wait_endpoint() {
 	die "timed out waiting for $1"
 }
 
-backend_start() { lima_start "$(linst "$1")" 10m >/dev/null 2>&1 || die "limactl start failed"; }
-backend_stop() { limactl stop "$(linst "$1")" >/dev/null 2>&1 || die "limactl stop failed"; }
+backend_start() { backend_exists "$1" || die "no such vm: $1"; lima_start "$(linst "$1")" 10m >/dev/null 2>&1 || die "limactl start failed"; }
+backend_stop() { backend_exists "$1" || die "no such vm: $1"; limactl stop "$(linst "$1")" >/dev/null 2>&1 || die "limactl stop failed"; }
 backend_size() { lima_json "$(linst "$1")" | jq -r '"\(.cpus) \(.memory / 1048576 | floor) \(.disk / 1073741824 | floor)"'; }
 # limactl edit only changes a stopped instance, so a running VM is stopped and started again.
 backend_resize() { # NAME CPUS MEM_MIB DISK_GIB (empty = unchanged)
