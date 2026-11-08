@@ -4,12 +4,10 @@
 import { describeHosts, profileFromDirectory, registeredHosts, resolveHost } from "../core/boxery-core.mjs";
 import { profileConfig } from "../core/profile.mjs";
 import { RegistryError, VALID_ALIAS, addHostLocked, checkedDefault, destination, isRegistered, needAlias, recordBackend, removeHostLocked, setDefault, setup, withRegistryLock } from "../core/registry.mjs";
-import { CliError, die, note, say } from "./lib.mjs";
+import { CliError, die, note, say, usage } from "./lib.mjs";
 /** @import { HostProfile } from "../core/boxery-core.mjs" */
 /** @import { RegistryIO } from "../core/registry.mjs" */
 
-const SETUP_USAGE = "usage: boxery setup user@host|local [--name NAME] [--key ~/.ssh/id_ed25519.pub] [--host-bin PATH] [--profile P] [--backend B]";
-const ADD_USAGE = "usage: boxery host add NAME DEST [--key K] [--host-bin PATH] [--backend B] [--profile P] | --config-dir DIR";
 /** The CLI's IO: stdout and stderr, and the host's commands share this terminal. @type {RegistryIO} */
 const TERMINAL = { say, note, terminal: true };
 
@@ -55,7 +53,7 @@ export async function setupNamed(args) {
 		finally { rl?.close(); }
 		return;
 	}
-	if (!args.length) die(SETUP_USAGE);
+	if (!args.length) usage("setup");
 	let name = "";
 	/** @type {string[]} */
 	const rest = [];
@@ -65,7 +63,7 @@ export async function setupNamed(args) {
 		else if (["--key", "--host-bin", "--profile", "--backend"].includes(a)) { if (i + 1 >= args.length) die(`${a} needs a value`); rest.push(a, args[++i]); }
 		else rest.push(a);
 	}
-	if (!rest.length) die(SETUP_USAGE);
+	if (!rest.length) usage("setup");
 	name ||= setupName(rest[0]);
 	await cli(async () => {
 		needAlias(name);
@@ -78,7 +76,7 @@ export async function setupNamed(args) {
 
 /** `boxery backend`. @param {HostProfile} host @param {string[]} args */
 export async function backendCommand(host, args) {
-	if (args.length) die("usage: boxery backend");
+	if (args.length) usage("backend");
 	const b = await recordBackend(host);
 	if (!b) die("could not read the host's backend (does it predate 'boxery-host backend'? see: boxery version)");
 	say(b);
@@ -89,28 +87,28 @@ export async function hostCommand(args) {
 	const [action = "ls", ...rest] = args;
 	if (action === "ls") return hostLs(rest);
 	if (action === "show") {
-		if (rest.length !== 1) die("usage: boxery host show NAME");
+		if (rest.length !== 1) usage("host", { sub: "show" });
 		return cli(() => say(resolveHost(needAlias(rest[0])).dir));
 	}
-	if (!["add", "use", "rm"].includes(action)) die("usage: boxery host add|ls|show|use|rm");
+	if (!["add", "use", "rm"].includes(action)) usage("host");
 	if (!rest.length) die(`host ${action} needs a name`);
 	const [alias, ...more] = rest;
 	await cli(async () => {
 		needAlias(alias);
 		await withRegistryLock(async () => {
 			if (action === "use") {
-				if (more.length) die("usage: boxery host use NAME");
+				if (more.length) usage("host", { sub: "use" });
 				resolveHost(alias);
 				checkedDefault(); // never replace malformed selection metadata
 				setDefault(alias);
 			} else if (action === "rm") {
-				if (more.length) die("usage: boxery host rm NAME");
+				if (more.length) usage("host", { sub: "rm" });
 				removeHostLocked(alias, TERMINAL);
 			} else {
 				if (isRegistered(alias)) die(`host already registered: ${alias}`);
-				if (!more.length) die(ADD_USAGE);
+				if (!more.length) usage("host", { sub: "add" });
 				if (more[0] === "--config-dir") {
-					if (more.length !== 2) die("usage: boxery host add NAME --config-dir DIR");
+					if (more.length !== 2) usage("host", { sub: "add NAME --config-dir" });
 					await addHostLocked(alias, { configDir: more[1] }, TERMINAL);
 				} else await addHostLocked(alias, { dest: more[0], ...setupFlags(more.slice(1)) }, TERMINAL);
 			}
@@ -121,7 +119,7 @@ export async function hostCommand(args) {
 /** `boxery host ls [--json]`: name, default, config dir, where it runs, its recorded backend, other names for it. @param {string[]} args */
 async function hostLs(args) {
 	const json = args[0] === "--json";
-	if (args.length > (json ? 1 : 0)) die("usage: boxery host ls [--json]");
+	if (args.length > (json ? 1 : 0)) usage("host", { sub: "ls" });
 	const def = checkedDefault();
 	registeredHosts(); // every registration checked first, as before any is listed
 	// (destination: the CLI sources a computed config, as it runs it; vm_info hosts parses plain assignments only: docs/hosts.md)

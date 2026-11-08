@@ -6,7 +6,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 A=$ROOT/controller/boxery
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-export BOXERY_CONF=$tmp/hostconf BOXERY_HOME=$tmp/ctl BOXERY_BACKEND=fake BOXERY_FAKE_DIR=$tmp/vms
+export BOXERY_CONF=$tmp/hostconf BOXERY_HOME=$tmp/ctl BOXERY_BACKEND=fake BOXERY_FAKE_DIR=$tmp/vms BOXERY_CACHE=$tmp/cache
 export BOXERY_RUNTIME_DIR=$tmp/run
 HOSTBIN=$ROOT/host/boxery-host P=$BOXERY_HOME/profiles/local # `setup local` registers host "local" here
 # Keep git's "global" config inside the fake VM home: never touch the real ~/.config/git/config.
@@ -175,7 +175,7 @@ if "$A" grant e1 llm:openai --cmd 'echo k' >/dev/null 2>&1; then bad "llm grant 
 # Version skew: a controller with llm: grants against a host from before them. That host rejects the
 # {"hosts","llm"} payload: the grant is kept locally, the user is warned, and nothing on the host changes.
 if git -C "$ROOT" cat-file -e 2ee0cd7:host/pool.mjs 2>/dev/null; then
-	old=$tmp/oldhost; mkdir -p "$old"; cp -R "$ROOT/backends" "$ROOT/guests" "$ROOT/host" "$ROOT/proxy" "$ROOT/image" "$ROOT/package.json" "$old/"
+	old=$tmp/oldhost; mkdir -p "$old"; cp -R "$ROOT/backends" "$ROOT/guests" "$ROOT/help" "$ROOT/host" "$ROOT/proxy" "$ROOT/image" "$ROOT/package.json" "$old/"
 	git -C "$ROOT" show 2ee0cd7:host/pool.mjs >"$old/host/pool.mjs"
 	HOME=$tmp/home "$A" host add old local --host-bin "$old/host/boxery-host" >/dev/null 2>&1
 	echo 'GRANT_CONFIRM=off' >>"$BOXERY_HOME/profiles/old/config"

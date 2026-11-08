@@ -11,6 +11,7 @@ The host runs in Node. Bash remains where it fits: the entry point (`host/boxery
 | `controller/boxery`, `controller/*.mjs` | The laptop CLI: a Bash shim that starts `controller/cli.mjs`; argument parsing, output, grant approval, terminal commands and the host registry (`cli.mjs` dispatch; `lib.mjs` argv, output and host calls; `usage.mjs`; `hosts.mjs`, `grants.mjs`, `leases.mjs`, `cp.mjs`, `jobs.mjs`, `runners-once.mjs`, `setup-openshell.mjs` per command group). VM lifecycle, leases, grants and profiles are the shared core (`core/lifecycle.mjs`, `core/leases.mjs`, `core/grants.mjs`, `core/profile.mjs`) | Host lease decisions or hypervisor mechanics |
 | `host/boxery-host` | Entry point (Bash): `connect` via `backend.sh`, everything else to Node (the node `init` recorded) | Any command logic |
 | `host/boxery-host.mjs` + `host/cli.mjs` | Node version check; CLI: argument dispatch, listings and their output formats, supervised mutating commands, private worker entry points | Lease policy, hypervisor commands |
+| `host/help.mjs` | Every boxery-host command's help (`help`, `COMMAND --help`, usage errors, the docs reference), rendered by `help/index.mjs`. Controllers read some of its lines to learn what an older host can do | Dispatch |
 | `host/setup.mjs` | `init` (state directory, `host.env`, proxy/reaper/runner-manager services), `build-base`, `add-key` | VM lifecycle |
 | `host/runners.mjs` | `runners`: GitHub Actions runner configuration, the GitHub token file, the REST client (JIT configs, registrations), the runner manager (host runners): one lease per runner, through `boxery-host acquire/renew/release`, and `runners __once` (local runners: the same slot served once, with the JIT config from the controller on stdin) ([GitHub runners](github-runners.md)) | Lease transitions, locks or resets (it is an ordinary lease holder) |
 | `host/vms.mjs`, `host/images.mjs`, `host/pool.mjs` | VM, image and pool-membership commands; edge routes | Locking (the supervisor holds locks around them) |
@@ -27,7 +28,7 @@ The host runs in Node. Bash remains where it fits: the entry point (`host/boxery
 | `host/runtime.mjs`, `host/config.mjs`, `host/shapes.mjs`, `host/util.mjs` | Per-command context (store, backend, journal, held locks), configuration, shapes, shared helpers | Side effects of their own |
 | `host/backends/*.sh` | Hypervisor-specific effects and idempotent recovery hooks | Pool ownership or lease transitions |
 
-`core/boxery-core.mjs` remains the agent-facing transport/tool implementation. It is not a dependency of the host. Both import `guests/` (facts about the guest OS, such as its paths), which imports nothing.
+`core/boxery-core.mjs` remains the agent-facing transport/tool implementation. It is not a dependency of the host. Both import `guests/` (facts about the guest OS, such as its paths), which imports nothing. The host also imports `help/` (rendering help from a command table), which imports nothing either; `host/help.mjs` is boxery-host's table.
 
 ## Call paths
 

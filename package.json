@@ -43,6 +43,7 @@
     "extension/",
     "backends/",
     "guests/",
+    "help/",
     "host/",
     "image/",
     "mcp/boxery-mcp.mjs",
@@ -56,6 +57,7 @@
     "test:shell": "bash test/shell/run.sh",
     "lint": "bash test/lint.sh",
     "typecheck": "tsc -p tsconfig.json && tsc -p test && tsc -p evals",
+    "docs:cli": "node scripts/docs-cli.mjs",
     "prepublishOnly": "npm test"
   },
   "peerDependencies": {

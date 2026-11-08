@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 tmp=$(mktemp -d); lsn=""
 trap '[[ -z $lsn ]] || kill "$lsn" 2>/dev/null || true; rm -rf "$tmp"' EXIT
-export BOXERY_CONF=$tmp/conf BOXERY_BACKEND=lima BOXERY_PROXY_PORT=9999 BOXERY_LIMA_PREFIX=boxery- CALLS=$tmp/calls.log STATE=$tmp/lima
+export BOXERY_CONF=$tmp/conf BOXERY_CACHE=$tmp/cache BOXERY_BACKEND=lima BOXERY_PROXY_PORT=9999 BOXERY_LIMA_PREFIX=boxery- CALLS=$tmp/calls.log STATE=$tmp/lima
 mkdir -p "$tmp/bin" "$BOXERY_CONF" "$STATE"; : >"$CALLS"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" >"$tmp/bin/$1"; chmod +x "$tmp/bin/$1"; }

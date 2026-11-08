@@ -1,5 +1,6 @@
 // Shared plumbing for the controller CLI's commands (controller/cli.mjs): errors and exit codes, argument
 // checks, the selected host profile, and processes that share this terminal (ssh, boxery-host).
+import { usageText } from "./usage.mjs";
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import { profileFromDirectory } from "../core/boxery-core.mjs";
@@ -14,6 +15,8 @@ export class CliError extends Error {
 }
 /** @param {string} message @param {number} [exitCode] @returns {never} */
 export const die = (message, exitCode = 1) => { throw new CliError(message, exitCode); };
+/** A usage error: COMMAND's usage lines from its help (controller/usage.mjs usageText). @param {string} command @param {{ sub?: string, hint?: string }} [opts] @returns {never} */
+export const usage = (command, opts) => die(usageText(command, opts));
 /** Exit with CODE, saying nothing (what failed has already said why). @param {number} exitCode @returns {never} */
 export const quit = (exitCode) => { throw new CliError("", exitCode); };
 /** @param {string} message */

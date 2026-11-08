@@ -944,7 +944,9 @@ export async function scroll(vm, { x, y, direction, amount, screenshot: shot }) 
 export async function browser(vm, { code, screenshot: shot, timeout }, { signal } = {}) {
 	const program = `
 const { chromium } = await import(process.env.BOXERY_PW);
-const out = (o) => process.stdout.write('\\n__BOXERY__' + JSON.stringify(o) + '\\n');
+// Wait until the result is written before exiting (exit drops what a pipe hasn't taken yet), but never linger
+// in the VM if the reader is gone without closing (a dropped connection): give up after 30 s.
+const out = (o) => new Promise(resolve => { setTimeout(() => process.exit(1), 30000).unref(); process.stdout.write('\\n__BOXERY__' + JSON.stringify(o) + '\\n', resolve); });
 try {
   const browser = await chromium.connectOverCDP('http://127.0.0.1:${CDP_PORT}');
   const context = browser.contexts()[0] ?? await browser.newContext();
@@ -953,8 +955,8 @@ try {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const result = await new AsyncFunction('page', 'context', 'browser', ${JSON.stringify(String(code))})(page, context, browser);
   const shot = ${shot ? "(await page.screenshot()).toString('base64')" : "null"};
-  out({ ok: true, result: result === undefined ? null : result, url: page.url(), shot });
-} catch (e) { out({ ok: false, error: String(e && e.stack || e) }); }
+  await out({ ok: true, result: result === undefined ? null : result, url: page.url(), shot });
+} catch (e) { await out({ ok: false, error: String(e && e.stack || e) }); }
 process.exit(0);`;
 	const script =
 		`${X}if ! curl -fs -m1 127.0.0.1:${CDP_PORT}/json/version >/dev/null; then ` +

@@ -11,6 +11,7 @@ import { defaultConf, HOST_ENV } from "./config.mjs";
 import { ensureHostKey, hasHostKey } from "./hostkeys.mjs";
 import { baseUserdata } from "./seed.mjs";
 import { fail, jsonArray, log, print, readFd, sleep, table } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Config } from "./config.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 
@@ -146,7 +147,7 @@ async function pickProxyPort(others) {
 export function profiles(_rt, [arg]) {
 	const list = hostProfiles().map(({ env: _env, ...p }) => p);
 	if (arg === "--json") return print(jsonArray(list));
-	if (arg) fail("usage: profiles [--json]");
+	if (arg) fail(hostUsage("profiles"));
 	print(table([16, 18, 7, 24], [["PROFILE", "BACKEND", "PORT", "UNIT", "CONF"], ...list.map((p) => [p.name, p.backend, p.proxyPort, p.proxyUnit, p.conf])]));
 }
 
@@ -384,8 +385,10 @@ export async function buildBase(rt) {
 	// The desktop build's cloud-config: image/base-user-data.yaml with the layers filled in.
 	const file = path.join(rt.cache, "base-user-data.yaml");
 	mkdirSync(rt.cache, { recursive: true });
-	writeFileSync(`${file}.tmp`, baseUserdata(rt.root, await rt.vms.layerFiles()));
-	renameSync(`${file}.tmp`, file);
+	// A per-process temp name: concurrent build-bases share the cache, and a fixed one races the rename.
+	const tmp = `${file}.${process.pid}.tmp`;
+	writeFileSync(tmp, baseUserdata(rt.root, await rt.vms.layerFiles()));
+	renameSync(tmp, file);
 	await rt.vms.call("backend_build_base", [], { extraEnv: { BASE_USERDATA: file } });
 }
 

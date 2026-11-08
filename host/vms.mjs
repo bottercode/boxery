@@ -10,6 +10,7 @@ import { issueToken, writeSeed } from "./seed.mjs";
 import { shapeSize } from "./shapes.mjs";
 import { fail, log, print, stamp, validImage, validName, validNum } from "./util.mjs";
 import { createVmRecord, deleteVmRecord, inheritedType, setVmSize, vmRecord } from "./vm-records.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { GuestEndpoint } from "./guest.mjs" */
 /** @import { Runtime } from "./runtime.mjs" */
 /** @import { VmKind } from "./vm-records.mjs" */
@@ -45,7 +46,7 @@ async function mustRun(rt, ep, command) {
 }
 
 // ---------------------------------------------------------------- new
-const NEW_USAGE = "usage: new NAME [--shape S] [--cpus N] [--mem MiB] [--disk GiB] [--from IMAGE] [--headless [--layers L,…]]";
+const NEW_USAGE = hostUsage("new");
 /** new NAME [--shape S] [--cpus N] [--mem MiB] [--disk GiB] [--from IMAGE] [--headless [--layers L,…]] @param {string[]} args */
 export function parseNewArgs(args) {
 	/** @type {NewArgs} */
@@ -101,21 +102,30 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 		fail(`no base image; run: boxery-host build-base (or: new ${name} --headless, which needs none)`);
 	}
 	const t0 = Date.now(), secs = () => Math.floor((Date.now() - t0) / 1000);
+	// Opt-in diagnostics stay on stderr and never include seed contents, tokens or SSH commands.
+	/** @template T @param {string} stage @param {() => Promise<T>} fn @returns {Promise<T>} */
+	const step = async (stage, fn) => {
+		if (rt.env?.BOXERY_TIMINGS !== "1") return fn();
+		const start = performance.now();
+		let ok = false;
+		try { const result = await fn(); ok = true; return result; }
+		finally { process.stderr.write(`[boxery-timing] ${JSON.stringify({ vm: name, stage, ms: Math.round(performance.now() - start), ok })}\n`); }
+	};
 	const action = rt.intent("create", name);
 	// Restricted workloads have no root provisioning, guest SSH keys or Boxery proxy token.
-	const userdata = rt.backend === "openshell" ? "" : await writeSeed(rt, name, provision);
-	await rt.vms.call("backend_new", [name, cpus, mem, disk, userdata, src]);
+	const userdata = rt.backend === "openshell" ? "" : await step("seed", () => writeSeed(rt, name, provision));
+	await step("backend-new", () => rt.vms.call("backend_new", [name, cpus, mem, disk, userdata, src]));
 	createVmRecord(rt.db(), name, { kind, os, size: rt.backend === "openshell" ? null : { shape: label, cpus, mem, disk } });
-	const ep = await rt.vms.waitEndpoint(name);
+	const ep = await step("endpoint", () => rt.vms.waitEndpoint(name));
 	log(rt.backend === "openshell" ? `${name}: waiting for restricted gateway SSH` : `${name} reachable at ${ep.host}:${ep.port}; waiting for ssh + cloud-init${provision ? ` (installing ${provision})` : ""}`);
-	await rt.waitSsh(name, ep);
+	await step("ssh", () => rt.waitSsh(name, ep));
 	if (rt.backend === "openshell") {
 		await mustRun(rt, ep, `test "$(id -u)" != 0 && test "$HOME" = ${linux.home} && test -d ${linux.project} && test -f ${linux.configDir}/headless || exit 1; for tool in bash node tar python3 setsid file git tmux; do command -v "$tool" >/dev/null || exit 1; done`);
 		rt.done(action);
 		log(`${name} ready (restricted headless; policy and credentials managed by OpenShell)`);
 		return `${name} ${ep.host}:${ep.port}`;
 	}
-	await mustRun(rt, ep, "cloud-init status --wait >/dev/null 2>&1; true");
+	await step("cloud-init", () => mustRun(rt, ep, "cloud-init status --wait >/dev/null 2>&1; true"));
 	if (provision) {
 		if (await rt.guest.run(ep, "test -f /var/log/boxery-provision.ok") !== 0) {
 			await rt.guest.run(ep, "sudo tail -30 /var/log/boxery-provision.log");
@@ -130,7 +140,7 @@ export async function createVm(rt, { name, shape, cpus, mem, disk, from, headles
 		try { await setPetKeys(rt, name); } catch { fail(`could not reset ssh keys on ${name}`); }
 		await rt.guest.run(ep, `rm -rf "${linux.grantsDir}"`);
 	}
-	if (kind === "desktop" && await rt.guest.run(ep, NOVNC) !== 0) log("warning: noVNC not answering yet");
+	if (kind === "desktop" && await step("desktop", () => rt.guest.run(ep, NOVNC)) !== 0) log("warning: noVNC not answering yet");
 	await refreshBuild(rt, name, ep); // what it was built with (from an image or fork: its source's software)
 	rt.done(action);
 	log(`${name} ready (${kind}, ${secs()}s)`);
@@ -159,7 +169,7 @@ export async function fork(rt, args) {
 		else if (!src) src = a;
 		else dsts.push(a);
 	}
-	if (!src || !dsts.length) fail("usage: fork SRC DST... [--shape S] [--cpus N --mem MiB --disk GiB]");
+	if (!src || !dsts.length) fail(hostUsage("fork"));
 	validName(src);
 	if (!await rt.vms.exists(src)) fail(`no such vm: ${src}`);
 	inheritedType(rt.db(), src); // a guest OS this boxery doesn't know fails here, before the capture
@@ -248,7 +258,7 @@ export async function stop(rt, [name]) {
 }
 
 // ---------------------------------------------------------------- resize
-const RESIZE_USAGE = "usage: resize NAME [--cpus N] [--mem MiB] [--disk GiB]";
+const RESIZE_USAGE = hostUsage("resize");
 /** @param {Runtime} rt @param {string[]} argv */
 export async function resize(rt, [name, ...args]) {
 	if (!name || name.startsWith("-")) fail(RESIZE_USAGE);

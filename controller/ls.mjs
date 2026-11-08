@@ -5,7 +5,7 @@
 // Notes (VMs not checked yet, a host that failed) come after the table, on stderr.
 import { describeHosts, withHost } from "../core/boxery-core.mjs";
 import * as lifecycle from "../core/lifecycle.mjs";
-import { die, hostFailed, needHost, note, quit, say, select, warn } from "./lib.mjs";
+import { die, hostFailed, needHost, note, quit, say, select, usage, warn } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 /** A row of listVms, as docs/cli.md describes `ls --json`.
@@ -14,16 +14,16 @@ import { die, hostFailed, needHost, note, quit, say, select, warn } from "./lib.
  *   guest?: { status?: string, reasons?: string[], checked_at?: number | null }, grants: ReturnType<typeof import("../core/grant-operations.mjs").listGrants> }} Vm */
 /** One host's listing, or why there is none. @typedef {{ name: string, heading: string, vms: Vm[], notes: string, error: Error | null }} Section */
 
-const USAGE = "usage: boxery ls [--json] [--refresh] [--running]";
 const COLUMNS = ["NAME", "STATE", "SSH", "DISK", "SHAPE", "KIND", "STATUS"];
 const running = (/** @type {Vm} */ vm) => ["running", "idle"].includes(vm.state ?? "");
 
 /** ls [--json] [--refresh] [--running]. allHosts: no --host was given.
  * @param {Selected} s the selected (or default) host @param {string[]} args @param {{ allHosts: boolean }} how @returns {Promise<void>} */
-export async function ls(s, args, { allHosts }) {
+export async function ls(s, args, how) {
+	const { allHosts } = how;
 	let json = false, refresh = false, onlyRunning = false;
 	for (const a of args) {
-		if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else if (a === "--running") onlyRunning = true; else die(USAGE);
+		if (a === "--json") json = true; else if (a === "--refresh") refresh = true; else if (a === "--running") onlyRunning = true; else usage("ls");
 	}
 	if (json) {
 		needHost(s);

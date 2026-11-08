@@ -58,11 +58,11 @@ const CLI_ONLY = {
 	patch: "rewrites a VM's software and may restart it under running agents; the user's to run (vm_info list shows outdated VMs)",
 };
 
-// controller/cli.mjs's command table, plus what it handles before selecting a host (help, host, setup).
-const { COMMANDS, PRE_HOST } = await import("../controller/cli.mjs");
-const ALIASES = new Set(["list"]); // ls's other name
+// controller/cli.mjs's command table: every command, including those handled before a host is selected
+// (help, host, setup). Aliases (list → ls) are the same command.
+const { COMMANDS } = await import("../controller/cli.mjs");
 function cliCommands() {
-	return new Set([...Object.keys(COMMANDS).filter((c) => !ALIASES.has(c)), ...PRE_HOST]);
+	return new Set(Object.keys(COMMANDS).filter((c) => !("alias" in COMMANDS[c])));
 }
 
 const mapped = () =>

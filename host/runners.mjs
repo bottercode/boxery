@@ -38,6 +38,7 @@ import path from "node:path";
 import * as leases from "./boxery-leases.mjs";
 import { reloadAgent, RUNNERS_TOKEN_TEMPLATE, serviceFiles } from "./setup.mjs";
 import { fail, log, print, readFd, table, VALID_NAME } from "./util.mjs";
+import { hostUsage } from "./help.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 
 export const HOLDER = "github-runner";
@@ -837,8 +838,7 @@ async function service(rt, action) {
 	log(`runner manager ${action === "start" ? "started" : "stopped"} (${rt.runnersUnit}; logs: ${process.platform === "darwin" ? `~/Library/Logs/${rt.runnersUnit}.log` : `journalctl --user -u ${rt.runnersUnit}`})`);
 }
 
-const USAGE = `usage: runners status [--json] | start | stop | token < FILE | run
-       runners config [--repo OWNER/REPO | --org ORG] [--vms NAME,…] [--count N] [--labels L,…] [--group ID] [--ttl S] [--api URL] [--prefix P]`;
+const USAGE = hostUsage("runners");
 
 /** runners config FLAGS: change and save the configuration (no flags: print it). @param {Runtime} rt @param {string[]} args */
 function configure(rt, args) {
