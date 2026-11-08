@@ -6,13 +6,13 @@
 import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOXERY_HOME, defaultHost, resolveHost, withHost } from "../core/boxery-core.mjs";
+import { BOXERY_HOME, defaultHost, hostBackend, resolveHost, withHost } from "../core/boxery-core.mjs";
 import * as lifecycle from "../core/lifecycle.mjs";
 import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
-import { CliError, VALID_SNAP, VALID_VM, commandLine, die, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { BOXERY, CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, invokedAs, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
 import { registerCommands, renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
@@ -42,14 +42,14 @@ async function cmdNew(s, args) {
 	const specs = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i], v = args[i + 1];
-		if (a === "--from") { if (!/^[a-z][a-z0-9-]{0,30}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v ?? "")) die(`invalid image name: ${v ?? ""} (use VM@SNAP)`); from = v; i++; }
-		else if (a === "--grant") { if (v == null) die("--grant needs a value"); specs.push(v); i++; }
+		if (a === "--from") { if (v == null) die("--from needs a value", USAGE); if (!/^[a-z][a-z0-9-]{0,30}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v ?? "")) die(`invalid image name: ${v ?? ""} (use VM@SNAP)`); from = v; i++; }
+		else if (a === "--grant") { if (v == null) die("--grant needs a value", USAGE); specs.push(v); i++; }
 		else if (a === "--agent-forward") specs.push("ssh-agent");
 		else if (a === "--headless") headless = true;
-		else if (a === "--layers") { if (v == null) die("--layers needs a value"); if (!/^[a-z0-9,-]+$/.test(v)) die(`invalid layer list: ${v}`); layers = v; i++; }
-		else if (a === "--shape") { if (v == null) die("--shape needs a value"); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
-		else if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
-		else if (a.startsWith("-")) die(`unknown flag ${a}`);
+		else if (a === "--layers") { if (v == null) die("--layers needs a value", USAGE); if (!/^[a-z0-9,-]+$/.test(v)) die(`invalid layer list: ${v}`); layers = v; i++; }
+		else if (a === "--shape") { if (v == null) die("--shape needs a value", USAGE); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
+		else if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`, USAGE); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
+		else if (a.startsWith("-")) die(`unknown flag ${a}`, USAGE);
 		else name = a;
 	}
 	needVm(name);
@@ -67,10 +67,10 @@ async function cmdFork(s, args) {
 	const size = {};
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i], v = args[i + 1];
-		if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
-		else if (a === "--shape") { if (v == null) die("--shape needs a value"); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
+		if (["--cpus", "--mem", "--disk"].includes(a)) { if (v == null) die(`${a} needs a value`, USAGE); if (!/^[0-9]+$/.test(v)) die(`${a} must be a number`); size[a.slice(2)] = v; i++; }
+		else if (a === "--shape") { if (v == null) die("--shape needs a value", USAGE); if (!VALID_VM.test(v)) die(`invalid shape name: ${v}`); size.shape = v; i++; }
 		else if (a === "--grants") copyGrants = true;
-		else if (a.startsWith("-")) die(`unknown flag ${a}`);
+		else if (a.startsWith("-")) die(`unknown flag ${a}`, USAGE);
 		else { needVm(a); if (!src) src = a; else dsts.push(a); }
 	}
 	if (!src || !dsts.length) usage("fork");
@@ -92,7 +92,7 @@ async function cmdRun(s, args) {
 	if (!args.length || ["-h", "--help"].includes(args[0])) {
 		const h = COMMANDS.run;
 		if ("help" in h) process.stdout.write(renderCommand("run", h.help));
-		if (!args.length) throw new CliError("", 1);
+		if (!args.length) throw new CliError("", USAGE);
 		return;
 	}
 	const name = needVm(args[0]);
@@ -114,7 +114,7 @@ async function cmdRun(s, args) {
 		const { startJob } = await import("./jobs.mjs");
 		const id = await startJob(s, name, argvRaw, cwd ? cwdRaw : null);
 		say(id);
-		note(`boxery: started ${id} on ${name}   logs: boxery logs ${name} ${id} -f   wait: boxery wait ${name} ${id}`);
+		note(`boxery: started ${id} on ${name}   logs: ${BOXERY} logs ${name} ${id} -f   wait: ${BOXERY} wait ${name} ${id}`);
 		literalNote(name, argv);
 		return;
 	}
@@ -126,7 +126,7 @@ async function cmdRun(s, args) {
 	if (hasRawBytes([...argvRaw, cwdRaw])) line = `eval "$(printf %s ${rawLine(argvRaw, cwd ? cwdRaw : null).toString("base64")} | base64 -d)"`;
 	const rc = await vmSsh(s, [`${name}.boxery`, line]);
 	// The usual mistake is a whole command line in one argument; say how to run it instead.
-	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: boxery run ${name} bash -c ${literal(argv[0])}`);
+	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: ${BOXERY} run ${name} bash -c ${literal(argv[0])}`);
 	literalNote(name, argv);
 	if (rc) throw new CliError("", rc);
 }
@@ -153,17 +153,20 @@ function rawLine(argv, cwd) {
 function literalNote(name, argv) {
 	if (["bash", "sh", "dash", "zsh", "awk", "gawk", "mawk", "perl", "jq", "sed", "python", "python3", "node", "ruby"].includes(path.basename(argv[0]))) return;
 	const a = argv.find((x) => x === "~" || x.startsWith("~/") || /\$[A-Z]/.test(x) || x.includes("${"));
-	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: boxery run ${name} bash -c '…'`);
+	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: ${BOXERY} run ${name} bash -c '…'`);
 }
 
 /** attach NAME [pi|opencode|shell] [session] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdAttach(s, [name = "", tool = "pi", sess = tool]) {
 	needVm(name);
+	const run = /** @type {Record<string, string>} */ ({ pi: "pi", opencode: "opencode", shell: "bash -l" });
+	if (!Object.hasOwn(run, tool)) die(`unknown agent: ${tool} (pi, opencode or shell)`, 2);
 	if (!/^[A-Za-z0-9._-]+$/.test(sess)) die(`invalid session name: ${sess}`);
-	const run = { pi: "pi", opencode: "opencode", shell: "bash -l" }[tool] ?? tool;
+	// (Without one, tmux says only "open terminal failed: not a terminal".)
+	if (!process.stdin.isTTY) die(`attach needs a terminal; for headless work use ${BOXERY} prompt ${name} "TASK" or ${BOXERY} run --bg ${name} CMD`);
 	await (await grants()).reapplyQuiet(s, name);
 	// tmux keeps the agent alive when you disconnect (laptop sleep, network change).
-	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
+	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run[tool]}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
 	if (rc) throw new CliError("", rc);
 }
 
@@ -211,6 +214,7 @@ async function cmdPrompt(s, [name = "", ...words]) {
 	needVm(name);
 	const prompt = words.join(" ");
 	if (!prompt) usage("prompt");
+	await needPiGrant(s, name);
 	const d = new Date(), p2 = (/** @type {number} */ n) => String(n).padStart(2, "0");
 	const id = `task-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
 	const b64 = Buffer.from(prompt).toString("base64");
@@ -219,7 +223,20 @@ async function cmdPrompt(s, [name = "", ...words]) {
 		printf '%s\\n' '#!/bin/bash -l' 'cd ~/project' 'pi -p "$(cat .boxery/${id}.prompt)" </dev/null 2>&1 | tee .boxery/${id}.log' 'echo "[boxery] task finished (exit \${PIPESTATUS[0]})" | tee -a .boxery/${id}.log' 'exec bash -l' > $d/${id}.sh
 		chmod +x $d/${id}.sh; tmux new-session -d -s ${id} -c ~/project $d/${id}.sh`;
 	await exitWith(vmSsh(s, [`${name}.boxery`, script]));
-	say(`started ${id} on ${name} — watch: boxery attach ${name} pi ${id}   log: boxery run ${name} cat project/.boxery/${id}.log`);
+	say(`started ${id} on ${name} — watch: ${BOXERY} attach ${name} pi ${id}   log: ${BOXERY} run ${name} cat .boxery/${id}.log`);
+}
+
+/** A VM has no LLM access until it is granted, and pi without it fails at once: say so before starting a
+ *  task, with the grant to ask for. (OpenShell provides LLM access itself.) @param {Selected} s @param {string} name */
+async function needPiGrant(s, name) {
+	if (hostBackend(s.host) === "openshell") return;
+	// pi's settings (the user's, then the project's) and its models, each after a \036: whatever a login
+	// script prints first is before them.
+	const r = await vmSshCapture(s, [`${name}.boxery`, "for f in ~/.pi/agent/settings.json ~/project/.pi/settings.json ~/.pi/agent/models.json; do printf '\\036'; cat \"$f\" 2>/dev/null; done; true"]);
+	if (r.code) throw new CliError("", r.code); // (ssh said why)
+	const [settings, projectSettings, models] = r.stdout.split("\x1e").slice(-3);
+	const spec = (await import("../core/grants.mjs")).missingPiGrant(name, { settings, projectSettings, models });
+	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: ${BOXERY} grant ${name} ${spec}`);
 }
 
 /** cp FROM TO: vm_copy's own code. Needs only the profile's ssh_config, not the host. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -268,6 +285,8 @@ async function cmdSsh(s, [name = "", ...rest]) {
  *  @typedef {{ help: Help, run?: Command, preHost?: true } | { alias: string }} Entry */
 
 const JSON_FLAG = /** @type {[string, string]} */ (["--json", "Print JSON (fields: docs/cli.md#json-output)"]);
+// Captures differ by backend (#219; backends/index.mjs, diskSnapshots).
+const CAPTURE_NOTE = "Most backends capture a running VM live (libvirt and cloud-hypervisor in about a second, exe.dev in about 12 s); Lima stops it and starts it again (about 10 s on vz), so its processes, tmux sessions and jobs end.";
 const SIZE_FLAGS = /** @type {[string, string][]} */ ([["--shape S", "A size from boxery shapes"], ["--cpus N", "CPUs"], ["--mem MiB", "Memory, in MiB"], ["--disk GiB", "Disk, in GiB"]]);
 const RUN_RULES = "Arguments are passed exactly as given, like docker exec: quotes, $, ~, globs and ; are not re-parsed in the VM. For pipes, &&, ~ or $VAR, run a shell: bash -c '...'.";
 
@@ -345,9 +364,10 @@ export const COMMANDS = {
 			needHost(s); needVm(n);
 			/** @type {Record<string, string>} */
 			const size = {};
+			if (!rest.length) usage("resize");
 			for (let i = 0; i < rest.length; i += 2) {
-				if (!["--cpus", "--mem", "--disk"].includes(rest[i]) || rest[i + 1] == null) { await hostPass(s, ["resize", n, ...rest]); return; } // the host says what's wrong
-				size[rest[i].slice(2)] = rest[i + 1] ?? "";
+				if (!["--cpus", "--mem", "--disk"].includes(rest[i]) || rest[i + 1] == null) usage("resize");
+				size[rest[i].slice(2)] = rest[i + 1]; // (the host checks the values)
 			}
 			await lc(() => lifecycle.resizeVm(n, size, passthrough()));
 		},
@@ -355,7 +375,7 @@ export const COMMANDS = {
 	fork: {
 		help: {
 			group: "vms", summary: "copy a VM (running or not) into new VMs, ~10 s", usage: ["fork SRC DST... [--grants] [--shape S] [--cpus N --mem MiB --disk GiB]"],
-			details: ["Each fork has SRC's disk (not its processes) with its own hostname, LLM token, ssh keys and network identity, and SRC's size unless --shape or size flags say otherwise."],
+			details: ["Each fork has SRC's disk (not its processes) with its own hostname, LLM token, ssh keys and network identity, and SRC's size unless --shape or size flags say otherwise.", CAPTURE_NOTE],
 			flags: [["--grants", "Give the forks SRC's grants too (asks for each)"], ...SIZE_FLAGS],
 			examples: [["Two copies to try two approaches", "boxery fork demo try-a try-b"]], seeAlso: ["snap", "new"], docs: "cli.md#snapshots-and-forks",
 		},
@@ -389,7 +409,7 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ snapshots
 	snap: {
-		help: { group: "snapshots", summary: "snapshot a VM's disk (~1 s; the VM keeps running)", usage: ["snap NAME [SNAP]"], seeAlso: ["snaps", "revert", "snap-rm"], docs: "cli.md#snapshots-and-forks" },
+		help: { group: "snapshots", summary: "snapshot a VM's disk (Lima restarts a running VM)", usage: ["snap NAME [SNAP]"], details: [CAPTURE_NOTE], seeAlso: ["snaps", "revert", "snap-rm"], docs: "cli.md#snapshots-and-forks" },
 		run: async (s, args) => {
 			needHost(s);
 			if (args[1] && !VALID_SNAP.test(args[1])) die(`invalid snapshot name: ${args[1]}`);
@@ -403,7 +423,7 @@ export const COMMANDS = {
 	revert: {
 		help: { group: "snapshots", summary: "restore a VM to a snapshot (keeps its name, address and token)", usage: ["revert NAME SNAP"] },
 		// A revert restores the snapshot's tmpfs too: grants are always reconciled to the current ones.
-		run: async (s, [n, snap]) => { needHost(s); if (!VALID_SNAP.test(snap ?? "")) die(`invalid snapshot name: ${snap ?? ""}`); await lc(() => lifecycle.revertVm(needVm(n), snap, passthrough())); },
+		run: async (s, [n, snap]) => { needHost(s); if (!snap) usage("revert"); if (!VALID_SNAP.test(snap)) die(`invalid snapshot name: ${snap ?? ""}`); await lc(() => lifecycle.revertVm(needVm(n), snap, passthrough())); },
 	},
 	"snap-rm": {
 		help: { group: "snapshots", summary: "delete a snapshot", usage: ["snap-rm NAME SNAP"] },
@@ -420,7 +440,12 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ work in a VM
 	ssh: {
-		help: { group: "use", summary: "shell into a VM (also: ssh NAME.boxery)", usage: ["ssh NAME [CMD...]"], details: ["With CMD, plain ssh semantics: the words are joined and run by the VM's shell."], seeAlso: ["run"] },
+		help: {
+			group: "use", summary: "shell into a VM (also: ssh NAME.boxery)", usage: ["ssh NAME[@HOST] [CMD...]"],
+			details: ["NAME@HOST selects a registered host without changing the default. If --host is also given, it must match HOST.", "With CMD, plain ssh semantics: the words are joined and run by the VM's shell."],
+			examples: [["A VM on another registered host", "boxery ssh demo@lab"], ["Run a command there", "boxery ssh demo@lab hostname"]],
+			seeAlso: ["run"],
+		},
 		run: async (s, args) => { needHost(s); await cmdSsh(s, args); },
 	},
 	run: {
@@ -453,12 +478,12 @@ export const COMMANDS = {
 	attach: {
 		help: {
 			group: "use", summary: "attach to an agent in a persistent tmux session", list: "attach NAME [AGENT]", usage: ["attach NAME [pi|opencode|shell] [SESSION]"],
-			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect."], seeAlso: ["sessions", "prompt"],
+			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect. It needs a terminal; for headless work use prompt or run --bg."], seeAlso: ["sessions", "prompt"],
 		},
 		run: async (s, args) => { needHost(s); await cmdAttach(s, args); },
 	},
 	prompt: {
-		help: { group: "use", summary: "start a headless pi task in its own tmux session", usage: ['prompt NAME "TASK"'], details: ["It logs to ~/project/.boxery/task-*.log in the VM; attach with boxery attach NAME pi task-…"] },
+		help: { group: "use", summary: "start a headless pi task in its own tmux session", usage: ['prompt NAME "TASK"'], details: ["It logs to ~/project/.boxery/task-*.log in the VM; attach with boxery attach NAME pi task-…", "pi needs the llm: grant for its provider (llm:chatgpt by default); without it prompt starts nothing and says what to grant."] },
 		run: async (s, args) => { needHost(s); await cmdPrompt(s, args); },
 	},
 	sessions: {
@@ -567,7 +592,7 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ host & diagnostics
 	version: {
-		help: { group: "admin", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
+		help: { group: "admin", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
 		run: async (s, args) => cmdVersion(s, args),
 	},
 	"upgrade-host": {
@@ -611,17 +636,19 @@ async function main(argv) {
 	if (/[\n\t\r]/.test(BOXERY_HOME)) die("paths cannot contain line breaks or tabs");
 	let explicit = "", pinned = "";
 	if (argv[0] === "--host") {
-		if (argv.length < 3) die("usage: boxery --host NAME COMMAND [ARGS...]");
+		if (argv.length < 3) die("usage: boxery --host NAME COMMAND [ARGS...]", USAGE);
 		explicit = argv[1];
 		if (!explicit) die("invalid host name");
 		argv = argv.slice(2);
 		// Internal (tests): --profile-dir uses that directory as the host's profile, without the registry.
 		if (argv[0] === "--profile-dir") {
-			if (argv.length < 3) die("usage: boxery --host NAME --profile-dir DIR COMMAND");
+			if (argv.length < 3) die("usage: boxery --host NAME --profile-dir DIR COMMAND", USAGE);
 			pinned = argv[1]; argv = argv.slice(2);
 		}
 	}
-	const [word = "help", ...args] = argv;
+	// (--version and -V too: what agents try first)
+	const [first = "help", ...args] = argv;
+	const word = ["--version", "-V"].includes(first) ? "version" : first;
 	// Help needs no host: boxery help [COMMAND], boxery -h, boxery COMMAND --help|-h.
 	if (["help", "-h", "--help"].includes(word)) return showHelp(args[0]);
 	const cmd = word.startsWith("__") ? word : resolve(COMMANDS, word);
@@ -634,9 +661,19 @@ async function main(argv) {
 	if (cmd === "__skew") { const n = skewNote({ version: args[0], describe: args[1] || null }, { version: args[2], describe: args[3] || null }, args[4] ?? ""); if (n) say(n); return; }
 	// Before setup there is no host to select; version still reports the controller.
 	if (cmd === "version" && !explicit && defaultHost() == null) return cmdVersion(null, args);
+	// SSH's VM@HOST is CLI shorthand, not an SSH user or a new destination. Resolve the registered profile
+	// before reading any config or reapplying grants; a conflicting selector must never reach either host.
+	if (cmd === "ssh" && args[0]?.includes("@")) {
+		const [vm, host, ...extra] = args[0].split("@");
+		if (!VALID_VM.test(vm) || !VALID_VM.test(host ?? "") || extra.length) die(`invalid SSH target: ${args[0]} (use NAME@HOST; names: lowercase letters, digits and hyphens, starting with a letter, at most 31 characters)`);
+		if (explicit && explicit !== host) die(`SSH target host ${host} conflicts with --host ${explicit}; use one host or matching selectors`);
+		explicit = host;
+		args[0] = vm;
+	}
 	const name = explicit || defaultHost();
 	if (!name) die("no host configured; run: boxery setup user@host|local (or boxery host use NAME)");
 	if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) die(`invalid host name: ${name}`);
+	invokedAs(explicit);
 	let dir;
 	if (pinned) {
 		if (!path.isAbsolute(pinned)) die(`invalid profile directory: ${pinned}`);

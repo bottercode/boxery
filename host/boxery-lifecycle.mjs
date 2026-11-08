@@ -14,6 +14,7 @@ import { LeaseWorkflows } from "./lease-workflows.mjs";
 import { setLeaseKeys } from "./pool.mjs";
 import { reconcileDrift } from "./recovery.mjs";
 import { issueToken } from "./seed.mjs";
+import { hint } from "./util.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 
 /** @typedef {"get" | "find" | "claim" | "commit" | "beginReset" | "finish" | "candidates" | "due" | "renew"} StoreMethod */
@@ -136,7 +137,7 @@ export async function runLifecycle(rt, command, args) {
 		await flows.reapCandidates();
 		await reconcileDrift({ backend: rt.vms, db, conf: rt.conf, lock });
 	};
-	flows = new LeaseWorkflows({ store, backend, journal, lock, reclaim, now, sleep, log: rt.log });
+	flows = new LeaseWorkflows({ store, backend, journal, lock, reclaim, now, sleep, log: rt.log, hint });
 	switch (command) {
 		case "acquire": {
 			// --only A,B: lease one of these pool VMs and no other (the GitHub runner manager, host/runners.mjs).

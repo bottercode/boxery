@@ -6,7 +6,7 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os, { homedir } from "node:os";
 import path from "node:path";
-import { BOXERY_HOME, currentHost } from "./boxery-core.mjs";
+import { BOXERY_HOME, currentHost, defaultHost } from "./boxery-core.mjs";
 import { writeAtomic } from "./fsutil.mjs";
 import { DEFAULT_HOST_BIN, checkTarget, localHostBin, parseConfig, remoteCommand, renderSshConfig } from "./ssh-config.mjs";
 /** @import { HostProfile } from "./boxery-core.mjs" */
@@ -84,7 +84,7 @@ export function hostCommand(host, c, args) {
 	needHost(host, c);
 	return c.host === "local"
 		? [localHostBin(c.hostBin, c.env.HOME ?? homedir()), [...(c.hostProfile ? ["--profile", c.hostProfile] : []), ...args]]
-		: ["ssh", ["-o", "LogLevel=ERROR", "--", c.host, remoteCommand(c, args)]];
+		: ["ssh", ["-o", "LogLevel=ERROR", "--", c.host, remoteCommand(c, args, c.env.BOXERY_CLI)]]; // (a local host inherits it)
 }
 
 /** raw: stdout as is (default: trimmed). config: the profile's, already loaded. onData: every chunk of
@@ -246,6 +246,6 @@ export async function refreshSshConfig({ host = currentHost(), warn = () => {} }
 	if (await hostPinsKeys(host, c)) { await writeSshConfig({ host, config: c }); rmSync(probe, { force: true }); }
 	else {
 		writeFileSync(probe, "");
-		warn(`boxery: host ${host.name} doesn't pin VM ssh host keys yet, so VM connections aren't verified; run: boxery upgrade-host`);
+		warn(`boxery: host ${host.name} doesn't pin VM ssh host keys yet, so VM connections aren't verified; run: ${host.name === defaultHost() ? "boxery" : `boxery --host ${host.name}`} upgrade-host`);
 	}
 }
