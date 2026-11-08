@@ -14,7 +14,7 @@ const NO_CURRENT = none("the CLI has no current VM; every command names its VM")
 // tool → CLI command, or {action: CLI command} for tools with an `action` enum.
 const CLI_FOR_TOOL = {
 	vm_bash: "run",
-	vm_jobs: { start: "run --bg", list: "jobs", logs: "logs", wait: "wait", kill: "kill" },
+	vm_jobs: { start: "run --bg", list: "job ls", logs: "job logs", wait: "job wait", kill: "job kill" },
 	vm_read: "run", // boxery run NAME cat PATH, or boxery cp NAME:PATH ./
 	vm_write: "cp",
 	vm_edit: none("people edit in their editor, over boxery ssh or after boxery cp"),
@@ -27,17 +27,19 @@ const CLI_FOR_TOOL = {
 	vm_browser: DESKTOP,
 	vm_manage: {
 		new: "new", fork: "fork", rm: "rm", start: "start", stop: "stop", resize: "resize",
-		snap: "snap", "snap-rm": "snap-rm", revert: "revert", use: NO_CURRENT, none: NO_CURRENT, "build-base": "build-base",
+		snap: "snapshot create", "snap-rm": "snapshot rm", revert: "snapshot restore", use: NO_CURRENT, none: NO_CURRENT, "build-base": "host build-base",
 		host: none("the CLI has no session host; every command takes --host, and the default is the user's (boxery host use)"),
 		host_add: "host add", host_rm: "host rm",
 	},
-	vm_info: { list: "ls", shapes: "shapes", grants: "grants", snaps: "snaps", images: "images", version: "version", hosts: "host ls", capabilities: "capabilities" },
-	vm_lease: { acquire: "acquire", renew: "renew", release: "release", list: "leases" },
-	vm_grant: "grant", // the agent asks; the user approves in a prompt, then it runs boxery grant
+	vm_info: { list: "ls", shapes: "shapes", grants: "access ls", snaps: "snapshot ls", images: "snapshot images", version: "version", hosts: "host ls", capabilities: "host capabilities" },
+	vm_lease: { acquire: "lease acquire", renew: "lease renew", release: "lease release", list: "lease ls" },
+	vm_grant: "access grant", // the agent asks; the user approves in a prompt, then it runs boxery access grant
 };
 
-// CLI commands no tool maps to, and why agents don't get them.
+// CLI commands no tool maps to, and why agents don't get them. A family action is its command's (below): an older
+// spelling is listed for what it runs, and a family when none of its actions maps to a tool.
 const CLI_ONLY = {
+	agent: "persistent tmux sessions for people (attach, prompt, ls); agents run commands with vm_bash and vm_jobs",
 	help: "usage text",
 	setup: "configuring the VM host is the user's setup",
 	backends: "catalog for user setup; agents inspect their configured host with vm_info capabilities",
@@ -59,10 +61,20 @@ const CLI_ONLY = {
 };
 
 // controller/cli.mjs's command table: every command, including those handled before a host is selected
-// (help, host, setup). Aliases (list → ls) are the same command.
+// (help, setup). Aliases (list → ls) are the same command. A family's action runs an existing command's handler:
+// `boxery job ls` is `jobs`, so a tool maps to either spelling and reaches the same command.
 const { COMMANDS } = await import("../controller/cli.mjs");
 function cliCommands() {
 	return new Set(Object.keys(COMMANDS).filter((c) => !("alias" in COMMANDS[c])));
+}
+/** The commands "boxery WORDS" dispatches to: the command, or a family and the command its action runs; null if there is no such action. @param {string} cli */
+function dispatched(cli) {
+	const [first, action] = cli.split(" ");
+	const e = COMMANDS[first];
+	if (!e || !("actions" in e) || !e.actions) return cliCommands().has(first) ? [first] : null;
+	if (!action || !Object.hasOwn(e.actions, action)) return null;
+	const c = e.actions[action].command;
+	return c ? [first, c] : [first];
 }
 
 const mapped = () =>
@@ -85,15 +97,28 @@ test("every vm_* tool and action names its CLI command, or why it has none", () 
 	assert.deepEqual(Object.keys(CLI_FOR_TOOL).filter((n) => !TOOLS.some((t) => t.name === n)), [], "CLI_FOR_TOOL lists tools that no longer exist");
 	for (const [tool, cli] of mapped()) {
 		if (cli instanceof NoCli) assert.ok(cli.why.length > 10, `${tool}: say why there is no CLI command`);
-		else assert.ok(cliCommands().has(cli.split(" ")[0]), `${tool} maps to "boxery ${cli}", which controller/boxery doesn't dispatch`);
+		else assert.ok(dispatched(cli), `${tool} maps to "boxery ${cli}", which controller/boxery doesn't dispatch`);
 	}
 });
 
 test("every CLI command maps to a vm_* tool or says why agents don't get it", () => {
-	const reached = new Set(mapped().flatMap(([, cli]) => (cli instanceof NoCli ? [] : [cli.split(" ")[0]])));
+	const reached = new Set(mapped().flatMap(([, cli]) => (cli instanceof NoCli ? [] : dispatched(cli) ?? [])));
 	for (const c of cliCommands()) {
 		assert.ok(reached.has(c) || c in CLI_ONLY, `boxery ${c} is new: map a vm_* tool to it in CLI_FOR_TOOL, or add it to CLI_ONLY with a reason`);
 		assert.ok(!(reached.has(c) && c in CLI_ONLY), `boxery ${c} is mapped to a tool and listed in CLI_ONLY`);
 	}
 	for (const c of Object.keys(CLI_ONLY)) assert.ok(cliCommands().has(c), `CLI_ONLY lists boxery ${c}, which controller/boxery doesn't dispatch`);
+});
+
+test("every family action maps to a tool through its command, or its command says why agents don't get it", () => {
+	const reached = new Set(mapped().flatMap(([, cli]) => (cli instanceof NoCli ? [] : dispatched(cli) ?? [])));
+	for (const [family, e] of Object.entries(COMMANDS)) {
+		if (!("actions" in e) || !e.actions) continue;
+		for (const [action, a] of Object.entries(e.actions)) {
+			const c = a.command ?? family;
+			assert.ok(reached.has(c) || c in CLI_ONLY || family in CLI_ONLY || (!a.command && reached.has(family)), `boxery ${family} ${action} runs ${c}: map a tool to it or say why agents don't get it`);
+		}
+	}
+	// the older spellings stay mapped: a tool reaches them through the family action that runs them
+	for (const old of ["snap", "snaps", "revert", "snap-rm", "images", "jobs", "logs", "wait", "kill", "grants", "acquire", "renew", "release", "leases", "build-base", "capabilities"]) assert.ok(reached.has(old), `boxery ${old} is no longer reached by any tool's mapping`);
 });

@@ -212,9 +212,11 @@ From the controller:
 
 ```bash
 boxery version                      # controller and host versions; warns when the host is behind
-boxery upgrade-host --check         # what would change, without changing it
-boxery upgrade-host                 # or: boxery --host hornet upgrade-host
+boxery host upgrade --check         # what would change, without changing it
+boxery host upgrade                 # or: boxery --host hornet host upgrade
 ```
+
+(`upgrade-host` is the older spelling.)
 
 Or on the host itself: `boxery-host upgrade [--check]`.
 

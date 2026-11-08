@@ -13,7 +13,7 @@ import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
 import { BOXERY, CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, invokedAs, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
-import { registerCommands, renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
+import { actionHelp, registerCommands, renderCommand, renderFamily, renderTop, resolve, routedThrough, unknownAction, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -280,9 +280,12 @@ async function cmdSsh(s, [name = "", ...rest]) {
 }
 
 /** @typedef {import("./usage.mjs").Help} Help */
+/** A family action: a command's handler (`command`; `args` turns the action's arguments into the command's), with its help. @typedef {import("../help/index.mjs").Action & { args?: (args: string[]) => string[] }} FamilyAction */
 /** A command: its help and what it runs (with a selected host). Aliases name their command; pre-host commands
- *  (help, host, setup, version without a host) are dispatched in main() and have no `run` here.
- *  @typedef {{ help: Help, run?: Command, preHost?: true } | { alias: string }} Entry */
+ *  (help, setup, version without a host) are dispatched in main() and have no `run` here. A family has `actions`
+ *  instead of `run`: each runs another command's handler, except host's registry actions (add, ls, show, use, rm),
+ *  which main() runs before any host is selected.
+ *  @typedef {{ help: Help, run?: Command, preHost?: true, actions?: Record<string, FamilyAction> } | { alias: string }} Entry */
 
 const JSON_FLAG = /** @type {[string, string]} */ (["--json", "Print JSON (fields: docs/cli.md#json-output)"]);
 // Captures differ by backend (#219; backends/index.mjs, diskSnapshots).
@@ -296,27 +299,44 @@ export const COMMANDS = {
 	setup: {
 		preHost: true,
 		help: {
-			group: "setup", summary: "configure a VM host (local = this machine), register your ssh key",
+			group: "start", summary: "configure a VM host (local = this machine), register your ssh key",
 			usage: ["setup user@host|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]", "setup local --backend openshell [OPTIONS]"],
 			details: ["OpenShell has its own options (gateway, image, policy, providers): boxery setup local --backend openshell --help."],
-			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: your first ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery backends lists them)"]],
+			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: your first ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery host backends lists them)"]],
 			examples: [["A Linux box you reach over ssh", "boxery setup you@my-host"], ["This machine", "boxery setup local"]],
 			seeAlso: ["host", "build-base", "backends"], docs: "install.md",
 		},
 	},
 	host: {
-		preHost: true,
 		help: {
-			group: "setup", summary: "manage named hosts (host use sets the default)", list: "host add|ls|show|use|rm",
-			usage: ["host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B | --profile P]", "host add NAME --config-dir DIR", "host ls [--json]", "host show NAME", "host use NAME", "host rm NAME"],
-			details: ["add registers DEST (user@host or local) as NAME, ls shows where each host runs and its backend, show prints a host's profile directory, use makes NAME the default and rm forgets a host (its VMs and profile data stay)."],
-			flags: [["--backend B", "Create a new profile on DEST for backend B (own state, proxy port and services)"], ["--profile P", "Use an existing profile on DEST"], ["--config-dir DIR", "Import an existing profile directory without setup"], ["--key K.pub", "The ssh public key VMs trust"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], JSON_FLAG],
-			examples: [["Add a second machine and make it the default", "boxery host add hornet you@hornet && boxery host use hornet"], ["One command on another host", "boxery --host hornet ls"]],
-			docs: "hosts.md",
+			group: "families", summary: "named hosts, and maintenance of the selected host", list: "host add|ls|show|use|rm|…", usage: [],
+			details: ["add, ls, show, use and rm manage this machine's registry and take no --host. add NAME DEST runs setup on DEST; importing --config-dir and the other registry actions stay local. Maintenance actions act on the selected host (--host NAME, else the default)."],
+			examples: [["Add a second machine and make it the default", "boxery host add hornet you@hornet && boxery host use hornet"], ["One command on another host", "boxery --host hornet ls"], ["Upgrade boxery on a registered host", "boxery --host hornet host upgrade --check"]],
+			seeAlso: ["setup"], docs: "hosts.md",
+		},
+		// (add, ls, show, use and rm have no command: controller/hosts.mjs runs them before any host is selected.)
+		actions: {
+			add: {
+				help: {
+					summary: "register DEST (user@host or local) as NAME", usage: ["host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B | --profile P]", "host add NAME --config-dir DIR"],
+					flags: [["--backend B", "Create a new profile on DEST for backend B (own state, proxy port and services)"], ["--profile P", "Use an existing profile on DEST"], ["--config-dir DIR", "Import an existing profile directory without setup"], ["--key K.pub", "The ssh public key VMs trust"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"]],
+					examples: [["A machine you reach over ssh", "boxery host add hornet you@hornet"], ["A second backend on this machine", "boxery host add exe local --backend exe"]], docs: "hosts.md",
+				},
+			},
+			ls: { help: { summary: "list hosts: where each runs and its backend", usage: ["host ls [--json]"], flags: [JSON_FLAG], docs: "hosts.md" } },
+			show: { help: { summary: "print a host's profile directory", usage: ["host show NAME"], docs: "hosts.md" } },
+			use: { help: { summary: "make NAME the default host", usage: ["host use NAME"], docs: "hosts.md" } },
+			rm: { help: { summary: "forget a host (its VMs and profile data stay)", usage: ["host rm NAME"], docs: "hosts.md" } },
+			"build-base": { command: "build-base" },
+			upgrade: { command: "upgrade-host" },
+			"proxy-log": { command: "proxy-log" },
+			backend: { command: "backend" },
+			backends: { command: "backends" },
+			capabilities: { command: "capabilities" },
 		},
 	},
 	"build-base": {
-		help: { group: "setup", summary: "build the host's desktop base image (one time, ~3 min)", usage: ["build-base"], details: ["Headless VMs (new --headless) don't need it."], docs: "cli.md#lifecycle" },
+		help: { group: "legacy", summary: "build the host's desktop base image (one time, ~3 min)", usage: ["build-base"], details: ["Headless VMs (new --headless) don't need it."], docs: "cli.md#lifecycle" },
 		run: async (s, args) => { needHost(s); if (args.length) usage("build-base"); await lc(() => lifecycle.buildBase(passthrough())); },
 	},
 
@@ -335,7 +355,7 @@ export const COMMANDS = {
 	new: {
 		help: {
 			group: "vms", summary: "create a VM", usage: ["new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless [--layers L,...]] [--grant SPEC]... [--agent-forward]", "new NAME --from VM@SNAP"],
-			flags: [...SIZE_FLAGS, ["--headless", "No desktop (shell and agents only); needs no build-base"], ["--layers L,...", "Extra image layers for a headless VM (github-runner)"], ["--from VM@SNAP", "Start from a snapshot (boxery images lists them)"], ["--grant SPEC", "Grant access at creation (asks first; see boxery grant)"], ["--agent-forward", "Same as --grant ssh-agent"]],
+			flags: [...SIZE_FLAGS, ["--headless", "No desktop (shell and agents only); needs no build-base"], ["--layers L,...", "Extra image layers for a headless VM (github-runner)"], ["--from VM@SNAP", "Start from a snapshot (boxery snapshot images lists them)"], ["--grant SPEC", "Grant access at creation (asks first; see boxery grant)"], ["--agent-forward", "Same as --grant ssh-agent"]],
 			examples: [["A desktop VM", "boxery new demo"], ["A larger, headless one", "boxery new ci-1 --headless --shape large"], ["A GitHub Actions runner VM", "boxery new runner-1 --headless --layers github-runner"]],
 			seeAlso: ["shapes", "fork", "rm"], docs: "cli.md#lifecycle",
 		},
@@ -392,7 +412,7 @@ export const COMMANDS = {
 	},
 	pin: {
 		help: {
-			group: "vms", summary: "re-pin a VM's ssh host key (VMs made before keys were pinned)", usage: ["pin NAME [--from-guest]"],
+			group: "more", summary: "re-pin a VM's ssh host key (VMs made before keys were pinned)", usage: ["pin NAME [--from-guest]"],
 			flags: [["--from-guest", "Trust what the VM's ssh endpoint answers, once"]], docs: "security.md#vm-host-keys",
 		},
 		// Re-pin a VM's ssh host key on the host (a VM made before keys were pinned, or whose record was lost).
@@ -403,13 +423,13 @@ export const COMMANDS = {
 		},
 	},
 	shapes: {
-		help: { group: "vms", summary: "VM sizes defined on the host (* = default)", usage: ["shapes [--json]"], flags: [JSON_FLAG], docs: "shapes.md" },
+		help: { group: "more", summary: "VM sizes defined on the host (* = default)", usage: ["shapes [--json]"], flags: [JSON_FLAG], docs: "shapes.md" },
 		run: async (s, args) => { needHost(s); if (!(args.length === 0 || (args.length === 1 && args[0] === "--json"))) usage("shapes"); await hostPass(s, ["shapes", ...args]); },
 	},
 
 	// ------------------------------------------------ snapshots
 	snap: {
-		help: { group: "snapshots", summary: "snapshot a VM's disk (Lima restarts a running VM)", usage: ["snap NAME [SNAP]"], details: [CAPTURE_NOTE], seeAlso: ["snaps", "revert", "snap-rm"], docs: "cli.md#snapshots-and-forks" },
+		help: { group: "legacy", summary: "snapshot a VM's disk (Lima restarts a running VM)", usage: ["snap NAME [SNAP]"], details: [CAPTURE_NOTE], seeAlso: ["snaps", "revert", "snap-rm"], docs: "cli.md#snapshots-and-forks" },
 		run: async (s, args) => {
 			needHost(s);
 			if (args[1] && !VALID_SNAP.test(args[1])) die(`invalid snapshot name: ${args[1]}`);
@@ -417,16 +437,16 @@ export const COMMANDS = {
 		},
 	},
 	snaps: {
-		help: { group: "snapshots", summary: "list a VM's snapshots", usage: ["snaps NAME [--json]"], flags: [JSON_FLAG] },
+		help: { group: "legacy", summary: "list a VM's snapshots", usage: ["snaps NAME [--json]"], flags: [JSON_FLAG] },
 		run: async (s, args) => { needHost(s); needVm(args[0]); await hostPass(s, ["snaps", ...args]); },
 	},
 	revert: {
-		help: { group: "snapshots", summary: "restore a VM to a snapshot (keeps its name, address and token)", usage: ["revert NAME SNAP"] },
+		help: { group: "legacy", summary: "restore a VM to a snapshot (keeps its name, address and token)", usage: ["revert NAME SNAP"] },
 		// A revert restores the snapshot's tmpfs too: grants are always reconciled to the current ones.
 		run: async (s, [n, snap]) => { needHost(s); if (!snap) usage("revert"); if (!VALID_SNAP.test(snap)) die(`invalid snapshot name: ${snap ?? ""}`); await lc(() => lifecycle.revertVm(needVm(n), snap, passthrough())); },
 	},
 	"snap-rm": {
-		help: { group: "snapshots", summary: "delete a snapshot", usage: ["snap-rm NAME SNAP"] },
+		help: { group: "legacy", summary: "delete a snapshot", usage: ["snap-rm NAME SNAP"] },
 		run: async (s, args) => {
 			needHost(s);
 			if (!args[1] || !VALID_SNAP.test(args[1])) usage("snap-rm");
@@ -434,8 +454,18 @@ export const COMMANDS = {
 		},
 	},
 	images: {
-		help: { group: "snapshots", summary: "every snapshot on the host (new NAME --from VM@SNAP uses one)", usage: ["images [--json]"], flags: [JSON_FLAG] },
+		help: { group: "legacy", summary: "every snapshot on the host (new NAME --from VM@SNAP uses one)", usage: ["images [--json]"], flags: [JSON_FLAG] },
 		run: async (s, args) => hostPass(s, ["images", ...args]),
+	},
+
+	snapshot: {
+		help: {
+			group: "families", summary: "saved VM disk states: create, restore, list, delete", usage: [],
+			details: ["A snapshot is a VM's disk saved as VM@SNAP, without its memory or processes. new NAME --from VM@SNAP starts a VM from one; fork copies a VM's current disk instead."],
+			examples: [["Save a VM before a risky change", "boxery snapshot create demo before-refactor"], ["Go back to it", "boxery snapshot restore demo before-refactor"], ["Start another VM from it", "boxery new try --from demo@before-refactor"]],
+			seeAlso: ["fork", "new"], docs: "cli.md#snapshots-and-forks",
+		},
+		actions: { create: { command: "snap" }, ls: { command: "snaps" }, restore: { command: "revert" }, rm: { command: "snap-rm" }, images: { command: "images" } },
 	},
 
 	// ------------------------------------------------ work in a VM
@@ -452,7 +482,7 @@ export const COMMANDS = {
 		help: {
 			group: "use", summary: "run a command in ~/project, args as given (like docker exec)", usage: ["run [--bg] NAME [--cwd DIR] [--] CMD [ARG...]"],
 			details: [RUN_RULES, "The exit code is the command's. A relative --cwd is under ~/project; ~/ expands in the VM; absolute paths are used as is."],
-			flags: [["--bg", "Run as a background job; prints the job id (see boxery jobs)"], ["--cwd DIR", "Working directory"], ["--", "End run's options"]],
+			flags: [["--bg", "Run as a background job; prints the job id (see boxery job ls)"], ["--cwd DIR", "Working directory"], ["--", "End run's options"]],
 			examples: [["Args are passed as-is: quotes, $, *, ; stay literal", "boxery run demo pnpm test"], ["In ~/project/modem", "boxery run demo --cwd modem git log -1"], ["Pipes, ~, $VAR and globs need bash -c", "boxery run demo bash -c 'ls ~ | wc -l; echo $HOME'"], ["Not this: one argument is one command name (fails with a hint)", "boxery run demo 'make test'"]],
 			seeAlso: ["jobs", "ssh"], docs: "cli.md#shell-and-in-vm-agents",
 		},
@@ -487,14 +517,24 @@ export const COMMANDS = {
 		run: async (s, args) => { needHost(s); await cmdPrompt(s, args); },
 	},
 	sessions: {
-		help: { group: "use", summary: "list a VM's tmux sessions", usage: ["sessions NAME [--json]"], flags: [JSON_FLAG] },
+		help: { group: "legacy", summary: "list a VM's tmux sessions", usage: ["sessions NAME [--json]"], flags: [JSON_FLAG] },
 		run: async (s, args) => { needHost(s); await cmdSessions(s, args); },
+	},
+
+	agent: {
+		help: {
+			group: "families", summary: "persistent coding-agent sessions in a VM", usage: [],
+			details: ["Sessions are tmux sessions in the VM: they keep running when you detach or disconnect. attach and prompt are also top-level commands, for everyday use."],
+			examples: [["Attach to pi (the same as: boxery attach demo)", "boxery agent attach demo"], ["opencode instead", "boxery agent attach demo opencode"], ["A headless task (the same as: boxery prompt …)", "boxery agent prompt demo TASK"], ["The VM's sessions", "boxery agent ls demo"]],
+			seeAlso: ["job"], docs: "cli.md#shell-and-in-vm-agents",
+		},
+		actions: { attach: { command: "attach" }, prompt: { command: "prompt" }, ls: { command: "sessions" } },
 	},
 
 	// ------------------------------------------------ background jobs
 	jobs: {
 		help: {
-			group: "jobs", summary: "list background jobs (run --bg starts one)", usage: ["jobs NAME [--json]", "jobs NAME --prune [--older-than 7d] [--json]"],
+			group: "legacy", summary: "list background jobs (run --bg starts one)", usage: ["jobs NAME [--json]", "jobs NAME --prune [--older-than 7d] [--json]"],
 			details: ["States: running, exited, or lost (it stopped without recording an exit code). exited+ means it left processes running."],
 			flags: [JSON_FLAG, ["--prune", "Delete finished jobs and their logs"], ["--older-than D", "With --prune: only jobs older than D (e.g. 7d)"]],
 			seeAlso: ["run", "logs", "wait", "kill"], docs: "cli.md#background-command-jobs",
@@ -503,7 +543,7 @@ export const COMMANDS = {
 	},
 	logs: {
 		help: {
-			group: "jobs", summary: "show a job's output (the last 200 lines)", usage: ["logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]"],
+			group: "legacy", summary: "show a job's output (the last 200 lines)", usage: ["logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]"],
 			flags: [["-f, --follow", "Follow until the job ends"], ["-n, --lines N", "The last N lines"], ["--tail N", "Same as --lines"], ["--bytes N", "Clip each read to its last N bytes"], ["--strip-ansi", "Remove colours and terminal escapes"]],
 			docs: "cli.md#background-command-jobs",
 		},
@@ -511,7 +551,7 @@ export const COMMANDS = {
 	},
 	wait: {
 		help: {
-			group: "jobs", summary: "wait for a job; exits with its exit code", usage: ["wait NAME JOB [--timeout S] [--json]"],
+			group: "legacy", summary: "wait for a job; exits with its exit code", usage: ["wait NAME JOB [--timeout S] [--json]"],
 			details: ["Exits 124 if --timeout passes first (the job keeps running) and 125 if the job is lost. Scripts that must tell these from the job's own codes should use --json."],
 			flags: [["--timeout S", "Give up after S seconds"], JSON_FLAG], docs: "cli.md#background-command-jobs",
 		},
@@ -519,16 +559,26 @@ export const COMMANDS = {
 	},
 	kill: {
 		help: {
-			group: "jobs", summary: "stop a job: SIGTERM its process group, then SIGKILL", usage: ["kill NAME JOB [--grace S] [--json]"],
+			group: "legacy", summary: "stop a job: SIGTERM its process group, then SIGKILL", usage: ["kill NAME JOB [--grace S] [--json]"],
 			flags: [["--grace S", "Seconds between SIGTERM and SIGKILL (default 5)"], JSON_FLAG], docs: "cli.md#background-command-jobs",
 		},
 		run: async (s, args) => { needHost(s); await (await import("./jobs.mjs")).kill(s, args); },
 	},
 
+	job: {
+		help: {
+			group: "families", summary: "background jobs in a VM (run --bg starts one)", usage: [],
+			details: ["A job keeps running when you disconnect. Start one with run --bg; these list, read, wait for and stop them."],
+			examples: [["Start a job, which prints its id", "boxery run --bg demo pnpm test"], ["Follow its output", "boxery job logs demo JOB -f"], ["Wait for it and exit with its exit code", "boxery job wait demo JOB --timeout 600"]],
+			seeAlso: ["run", "agent"], docs: "cli.md#background-command-jobs",
+		},
+		actions: { ls: { command: "jobs" }, logs: { command: "logs" }, wait: { command: "wait" }, kill: { command: "kill" } },
+	},
+
 	// ------------------------------------------------ access
 	grant: {
 		help: {
-			group: "access", summary: "give a VM access to something on this machine (asks first)", usage: ["grant NAME SPEC... [--cmd CMD]"],
+			group: "legacy", summary: "give a VM access to something on this machine (asks first)", usage: ["grant NAME SPEC... [--cmd CMD]"],
 			details: ["SPEC is one of:\n  llm:chatgpt|openai|anthropic|ollama   LLM access (VMs have none without it)\n  github [--readonly]                   GitHub over HTTPS; the token stays here\n  http:HOST --cmd CMD [--auth bearer|basic:USER|header:NAME] [--readonly]\n                                        an HTTP API; the secret never enters the VM\n  ssh-agent                             forward your ssh agent\n  env:VAR [--cmd CMD]                   push an environment variable\n  file:LOCAL[=REMOTE]                   push a file", "Adding access prompts on your terminal and defaults to No."],
 			flags: [["--cmd CMD", "env: and http: grants: the command on this machine that prints the secret"], ["--auth A", "http: grants: bearer (default), basic:USER or header:NAME"], ["--readonly", "http: and github grants: GET/HEAD and git fetch only"]],
 			examples: [["Let the VM use your Anthropic subscription", "boxery grant demo llm:anthropic"], ["Read-only GitHub", "boxery grant demo github --readonly"]],
@@ -537,46 +587,83 @@ export const COMMANDS = {
 		run: async (s, args) => { needHost(s); await (await grants()).grant(s, args); },
 	},
 	revoke: {
-		help: { group: "access", summary: "take access away (pushed values are deleted from the VM)", usage: ["revoke NAME SPEC...|all"], docs: "grants.md" },
+		help: { group: "legacy", summary: "take access away (pushed values are deleted from the VM)", usage: ["revoke NAME SPEC...|all"], docs: "grants.md" },
 		run: async (s, args) => { needHost(s); await (await grants()).revoke(s, args); },
 	},
 	grants: {
-		help: { group: "access", summary: "show a VM's grants, or push them again (apply)", list: "grants NAME [apply]", usage: ["grants NAME [apply [--quiet] | --json]"], flags: [JSON_FLAG], docs: "grants.md" },
+		help: { group: "legacy", summary: "show a VM's grants, or push them again (apply)", list: "grants NAME [apply]", usage: ["grants NAME [apply [--quiet] | --json]"], flags: [JSON_FLAG], docs: "grants.md" },
 		run: async (s, args) => (await grants()).grantsCommand(s, args),
 	},
 	"agent-forward": {
-		help: { group: "access", summary: "same as grant/revoke NAME ssh-agent", usage: ["agent-forward NAME on|off"] },
+		help: { group: "legacy", summary: "same as access grant|revoke NAME ssh-agent", usage: ["agent-forward NAME on|off"] },
 		run: async (s, args) => (await grants()).agentForward(s, args),
+	},
+
+	access: {
+		help: {
+			group: "families", summary: "what a VM may use from this machine (grants)", usage: [],
+			details: ["Adding access asks on your terminal and defaults to No. Listing, revoking and applying never ask. Listing reads saved specifications, not secret values, but does show stored --cmd text: keep secrets out of command literals. agent-forward NAME on|off still works: it is access grant|revoke NAME ssh-agent."],
+			examples: [["Let the VM use your Anthropic subscription", "boxery access grant demo llm:anthropic"], ["What the VM has been granted", "boxery access ls demo"], ["Take access away", "boxery access revoke demo github"]],
+			docs: "grants.md",
+		},
+		actions: {
+			grant: { command: "grant" },
+			revoke: { command: "revoke" },
+			// ls and apply are `grants`' two jobs, kept apart: ls is read-only and refuses anything else.
+			ls: {
+				command: "grants",
+				args: (a) => { if (a.length > 2 || (a.length === 2 && a[1] !== "--json")) usage("access", { sub: "ls" }); return a; },
+				help: { summary: "show a VM's grant kinds and settings (read-only)", usage: ["access ls NAME [--json]"], details: ["Shows saved specifications, including --cmd text, without executing value commands or reading granted files or environment values. With none recorded, checks the host's inventory to catch a missing VM. A secret embedded in a command literal is therefore visible; use commands that read a secret store instead."], examples: [["What demo has been granted", "boxery access ls demo"]] },
+			},
+			apply: {
+				command: "grants",
+				args: (a) => { if (a.length < 1 || a.length > 2 || (a.length === 2 && a[1] !== "--quiet")) usage("access", { sub: "apply" }); return [a[0], "apply", ...a.slice(1)]; },
+				help: {
+					summary: "push a VM's grants to it again", usage: ["access apply NAME [--quiet]"], flags: [["--quiet", "Only print warnings"]],
+					details: ["Pushed grants (env: and file:) live in the VM's tmpfs and are gone after a reboot; ssh, attach and run --bg apply them again by themselves. Nothing new is granted."],
+					examples: [["After a VM restarted", "boxery access apply demo"]],
+				},
+			},
+		},
 	},
 
 	// ------------------------------------------------ pool & runners
 	acquire: {
 		help: {
-			group: "pool", summary: "lease a VM from the shared pool (prints NAME LEASE_ID)", usage: ["acquire [--ttl S] [--wait S] [--holder H]"],
+			group: "legacy", summary: "lease a VM from the shared pool (prints NAME LEASE_ID)", usage: ["acquire [--ttl S] [--wait S] [--holder H]"],
 			flags: [["--ttl S", "Lease length in seconds (default 1800)"], ["--wait S", "Wait up to S seconds for a free VM"], ["--holder H", "Who holds the lease, as the host shows it (default: user@machine)"]],
 			seeAlso: ["renew", "release", "leases"], docs: "pool.md",
 		},
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "acquire", args); },
 	},
 	renew: {
-		help: { group: "pool", summary: "extend your lease", usage: ["renew NAME [--ttl S]"], flags: [["--ttl S", "New lease length in seconds"]], docs: "pool.md" },
+		help: { group: "legacy", summary: "extend your lease", usage: ["renew NAME [--ttl S]"], flags: [["--ttl S", "New lease length in seconds"]], docs: "pool.md" },
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "renew", args); },
 	},
 	release: {
-		help: { group: "pool", summary: "give a leased VM back (it is reset to its clean snapshot)", usage: ["release NAME"], docs: "pool.md" },
+		help: { group: "legacy", summary: "give a leased VM back (it is reset to its clean snapshot)", usage: ["release NAME"], docs: "pool.md" },
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "release", args); },
 	},
 	leases: {
-		help: { group: "pool", summary: "your leases", usage: ["leases [--json]"], flags: [JSON_FLAG], docs: "pool.md" },
+		help: { group: "legacy", summary: "your leases", usage: ["leases [--json]"], flags: [JSON_FLAG], docs: "pool.md" },
 		run: async (s, args) => (await import("./leases.mjs")).leaseCommand(s, "leases", args),
 	},
+	lease: {
+		help: {
+			group: "families", summary: "borrow a VM from the shared pool", usage: [],
+			details: ["A lease is an exclusive, expiring claim on a pool VM. Releasing it, or letting it expire, resets the VM. Adding VMs to the pool is pool."],
+			examples: [["Borrow a VM for 10 minutes, waiting up to a minute", "boxery lease acquire --ttl 600 --wait 60"], ["Keep it longer", "boxery lease renew pool1"], ["Give it back", "boxery lease release pool1"]],
+			seeAlso: ["pool"], docs: "pool.md",
+		},
+		actions: { acquire: { command: "acquire" }, renew: { command: "renew" }, release: { command: "release" }, ls: { command: "leases" } },
+	},
 	pool: {
-		help: { group: "pool", summary: "manage the shared pool of leasable VMs (admin)", usage: ["pool add NAME", "pool rm NAME [--force]", "pool ls [--json]"], list: "pool add|rm|ls", docs: "pool.md" },
+		help: { group: "families", summary: "manage the shared pool of leasable VMs (admin)", usage: ["pool add NAME", "pool rm NAME [--force]", "pool ls [--json]"], list: "pool add|rm|ls", docs: "pool.md" },
 		run: async (s, args) => { needHost(s); await lc(() => lifecycle.pool(args, passthrough())); },
 	},
 	runners: {
 		help: {
-			group: "pool", summary: "GitHub Actions runners on pool VMs", list: "runners once|status|...",
+			group: "families", summary: "GitHub Actions runners on pool VMs", list: "runners once|status|...",
 			usage: ["runners once [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]", "runners status [--json] | start | stop | token < FILE", "runners config [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--count N] [--labels L,...] ..."],
 			details: ["once: a local runner. One job on a fresh pool VM, registered with your gh login; nothing is stored on the host. --repo defaults to this directory's repo.", "status, start, stop, config, token: host runners (admin). The host keeps runners waiting, with its own GitHub token."],
 			docs: "github-runners.md",
@@ -592,12 +679,12 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ host & diagnostics
 	version: {
-		help: { group: "admin", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
+		help: { group: "more", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
 		run: async (s, args) => cmdVersion(s, args),
 	},
 	"upgrade-host": {
 		help: {
-			group: "admin", summary: "update boxery on the host and restart its services", usage: ["upgrade-host [--check] [--ref REF] [--wait S] [--reinit]"],
+			group: "legacy", summary: "update boxery on the host and restart its services", usage: ["upgrade-host [--check] [--ref REF] [--wait S] [--reinit]"],
 			details: ["Waits for in-flight VM operations and rolls back if checks fail."],
 			flags: [["--check", "Only report the install, its target version and profiles"], ["--ref REF", "Upgrade to this git ref or npm version"], ["--wait S", "Wait up to S seconds for in-flight operations"], ["--reinit", "Re-run init for every profile even when up to date"]],
 			docs: "install.md#upgrading",
@@ -605,22 +692,30 @@ export const COMMANDS = {
 		run: cmdUpgradeHost,
 	},
 	backends: {
-		help: { group: "admin", summary: "backend support, requirements and capabilities", usage: ["backends [--json]"], flags: [JSON_FLAG], docs: "backends.md" },
+		help: { group: "legacy", summary: "backend support, requirements and capabilities", usage: ["backends [--json]"], flags: [JSON_FLAG], docs: "backends.md" },
 		run: async (s, args) => hostPass(s, ["backends", ...args]),
 	},
 	capabilities: {
-		help: { group: "admin", summary: "the selected host's platform and capabilities", usage: ["capabilities [--json | --check]"], flags: [JSON_FLAG, ["--check", "Run the backend preflight; fails when a requirement is missing"]], docs: "backends.md" },
+		help: { group: "legacy", summary: "the selected host's platform and capabilities", usage: ["capabilities [--json | --check]"], flags: [JSON_FLAG, ["--check", "Run the backend preflight; fails when a requirement is missing"]], docs: "backends.md" },
 		run: async (s, args) => hostPass(s, ["capabilities", ...args]),
 	},
 	backend: {
-		help: { group: "admin", summary: "the host's VM backend (recorded for host ls)", usage: ["backend"] },
+		help: { group: "legacy", summary: "the host's VM backend (recorded for host ls)", usage: ["backend"] },
 		run: async (s, args) => { needHost(s); await backendCommand(s.host, args); },
 	},
 	"proxy-log": {
-		help: { group: "admin", summary: "recent LLM and edge (http: grant) requests on the host", usage: ["proxy-log [N]"] },
+		help: { group: "legacy", summary: "recent LLM and edge (http: grant) requests on the host", usage: ["proxy-log [N]"] },
 		run: async (s, args) => hostPass(s, ["proxy-log", ...args]),
 	},
-	help: { preHost: true, help: { group: "admin", summary: "show help for boxery or a command", usage: ["help [COMMAND]"] } },
+	help: {
+		preHost: true,
+		help: {
+			group: "start", summary: "show help for boxery, a command or a family action", list: "help [--all | COMMAND]", usage: ["help [--all | COMMAND [ACTION]]"],
+			details: ["boxery help lists the everyday commands and the command families; help --all adds every family action and every older spelling."],
+			flags: [["--all", "Every command, family action and older spelling"]],
+			examples: [["Everything, with the older spellings", "boxery help --all"], ["A family, then one of its actions", "boxery help access && boxery help access grant"]],
+		},
+	},
 };
 
 /** Commands handled before a host is selected. */
@@ -646,16 +741,33 @@ async function main(argv) {
 			pinned = argv[1]; argv = argv.slice(2);
 		}
 	}
-	// (--version and -V too: what agents try first)
-	const [first = "help", ...args] = argv;
+	const [first = "help", ...rest] = argv;
 	const word = ["--version", "-V"].includes(first) ? "version" : first;
-	// Help needs no host: boxery help [COMMAND], boxery -h, boxery COMMAND --help|-h.
-	if (["help", "-h", "--help"].includes(word)) return showHelp(args[0]);
-	const cmd = word.startsWith("__") ? word : resolve(COMMANDS, word);
+	// Help needs no host: boxery help [--all | COMMAND [ACTION]], boxery -h, boxery COMMAND [ACTION] --help|-h.
+	if (["help", "-h", "--help"].includes(word)) return showHelp(rest);
+	let cmd = word.startsWith("__") ? word : resolve(COMMANDS, word);
 	if (cmd === null) throw new CliError(unknownCommand(COMMANDS, word), 2);
-	// (COMMAND SUB --help too: host add --help, runners once --help. Not after run's own options or CMD.)
-	if (["-h", "--help"].includes(args[0] ?? "") || (cmd !== "run" && cmd !== "ssh" && args.length === 2 && /^[a-z]+$/.test(args[0]) && ["-h", "--help"].includes(args[1]))) return showHelp(cmd);
-	if (cmd === "host") { if (explicit) die("--host does not apply to host management"); return hostCommand(args); }
+	let args = rest;
+	const family = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : undefined;
+	if (family && "actions" in family && family.actions) {
+		// A family's action runs another command's handler, with the same host selection below. Everything here
+		// is decided from the words alone: help and mistakes never reach a host, a profile or a grant.
+		const [action, ...tail] = rest;
+		if (action === undefined && cmd !== "host") throw new CliError(unknownAction(COMMANDS, cmd), 2);
+		if (["-h", "--help"].includes(action ?? "")) return showHelp([cmd]);
+		const a = Object.hasOwn(family.actions, action ?? "ls") ? family.actions[action ?? "ls"] : null;
+		if (!a) throw new CliError(unknownAction(COMMANDS, cmd, action), 2);
+		// Only a leading help flag belongs to the action; after NAME it may be prompt text or an agent command.
+		if (["-h", "--help"].includes(tail[0] ?? "")) return showHelp([cmd, action ?? "ls"]);
+		if (!a.command) {
+			// host's registry actions: this machine's registry, not a host
+			if (explicit) die("--host does not apply to host management");
+			return hostCommand(rest);
+		}
+		routedThrough(a.command, cmd, /** @type {string} */ (action));
+		cmd = a.command;
+		args = a.args ? a.args(tail) : tail;
+	} else if (wantsHelp(cmd, args)) return showHelp([cmd]);
 	if (cmd === "setup") { if (explicit) die("setup takes --name NAME, not --host"); return setupNamed(args); }
 	// Internal (tests): __skew CTL_VERSION CTL_DESCRIBE HOST_VERSION HOST_DESCRIBE [HOST_NAME]
 	if (cmd === "__skew") { const n = skewNote({ version: args[0], describe: args[1] || null }, { version: args[2], describe: args[3] || null }, args[4] ?? ""); if (n) say(n); return; }
@@ -699,13 +811,35 @@ async function main(argv) {
 	});
 }
 
-/** boxery help [COMMAND]. @param {string} [word] */
-function showHelp(word) {
-	if (!word) return void process.stdout.write(renderTop(COMMANDS));
+/** The legacy command help convention: a leading flag, or alone after one word (snap demo --help).
+ *  Keep it for existing spellings; new family actions only recognise a leading help flag.
+ *  run and ssh always own their remote payload. @param {string} command @param {string[]} args */
+function wantsHelp(command, args) {
+	const help = (/** @type {string | undefined} */ w) => w === "-h" || w === "--help";
+	return help(args[0]) || (command !== "run" && command !== "ssh" && args.length === 2 && /^[a-z]+$/.test(args[0]) && help(args[1]));
+}
+
+/** boxery help [--all | COMMAND [ACTION]]: the same pages as COMMAND --help. @param {string[]} words */
+function showHelp(words) {
+	// Explicit help has no payload: accept a redundant trailing help flag, including legacy help host add --help.
+	if (words.length > 1 && ["-h", "--help"].includes(words.at(-1) ?? "")) words = words.slice(0, -1);
+	const [word, action] = words;
+	if (word === undefined || word === "--all") {
+		if (words.length > 1) usage("help");
+		return void process.stdout.write(renderTop(COMMANDS, word === "--all"));
+	}
 	const cmd = resolve(COMMANDS, word);
 	if (cmd === null) throw new CliError(unknownCommand(COMMANDS, word), 2);
 	const entry = COMMANDS[cmd];
-	if ("help" in entry) process.stdout.write(renderCommand(cmd, entry.help));
+	if (!("help" in entry)) return;
+	if (entry.actions) {
+		if (words.length > 2) usage("help");
+		if (action === undefined) return void process.stdout.write(renderFamily(COMMANDS, cmd));
+		const h = actionHelp(COMMANDS, cmd, action);
+		if (!h) throw new CliError(unknownAction(COMMANDS, cmd, action), 2);
+		return void process.stdout.write(renderCommand(`${cmd} ${action}`, h));
+	}
+	process.stdout.write(renderCommand(cmd, entry.help));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

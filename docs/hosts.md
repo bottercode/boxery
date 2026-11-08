@@ -15,7 +15,7 @@ boxery host add laptop local --key ~/.ssh/id_ed25519.pub
 boxery host add hornet you@hornet --host-bin '~/.local/bin/boxery-host'
 # A second VM platform on a host that already runs one (here: exe.dev beside Lima on this Mac).
 boxery host add exe local --backend exe
-boxery --host exe build-base         # desktop base image, once (~3 min); headless VMs don't need it
+boxery --host exe host build-base    # desktop base image, once (~3 min); headless VMs don't need it
 
 boxery host ls                       # name, default marker, config directory, destination, backend, same-profile names
 boxery host show hornet              # prints its config directory (not credentials)
@@ -24,11 +24,11 @@ boxery ls                            # every host's VMs, a section each (the def
 boxery --host laptop ls              # just that host's
 boxery --host hornet new demo
 boxery --host hornet desktop demo
-boxery --host hornet grant demo ssh-agent
+boxery --host hornet access grant demo ssh-agent
 boxery host rm hornet                # forget registration only
 ```
 
-Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and without an explicit host or a default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands operate on the registry, not the selected host, and cannot be combined with `--host`.
+Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and without an explicit host or a default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands (`host add`, `ls`, `show`, `use`, `rm`) operate on the registry, not the selected host, and cannot be combined with `--host`. The other `host` actions (`build-base`, `upgrade`, `proxy-log`, `backend`, `backends`, `capabilities`) act on the selected host: `boxery --host hornet host upgrade --check`.
 
 For SSH, `boxery ssh demo@lab` is shorthand for `boxery --host lab ssh demo`.
 The suffix names a registered host, not an SSH destination, and does not change the
