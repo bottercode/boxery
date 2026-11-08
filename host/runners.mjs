@@ -37,7 +37,7 @@ import { homedir, hostname } from "node:os";
 import path from "node:path";
 import * as leases from "./boxery-leases.mjs";
 import { reloadAgent, RUNNERS_TOKEN_TEMPLATE, serviceFiles } from "./setup.mjs";
-import { fail, log, print, readFd, table, VALID_NAME } from "./util.mjs";
+import { fail, hint, log, print, readFd, table, VALID_NAME } from "./util.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 
@@ -111,7 +111,7 @@ function readConfig(conf) {
 /** The configuration, checked; fails if there is none or it is invalid. @param {string} conf */
 export function loadRunnerConfig(conf) {
 	const raw = readConfig(conf);
-	if (!raw) return fail("runners are not configured (boxery-host runners config --repo OWNER/REPO --vms NAME,…)");
+	if (!raw) return fail(`runners are not configured (${hint("runners config --repo OWNER/REPO --vms NAME,…")})`);
 	const c = checkConfig(raw);
 	return typeof c === "string" ? fail(`${path.join(conf, CONFIG_FILE)}: ${c}`) : c;
 }
@@ -173,7 +173,7 @@ export function createGitHub({ api, repo, org, token, fetch = globalThis.fetch, 
 		const what = `${method} ${repo ? `repos/${repo}` : `orgs/${org}`}/actions/runners${sub.replace(/\?.*/, "")}`;
 		let t;
 		try { t = token(); } catch (e) { throw new GitHubError(/** @type {Error} */ (e).message); }
-		if (!t) throw new GitHubError("no GitHub token (boxery-host runners token < FILE)");
+		if (!t) throw new GitHubError(`no GitHub token (${hint("runners token < FILE")})`);
 		let res;
 		try {
 			res = await fetch(`${base}${sub}`, {
@@ -449,7 +449,7 @@ export class RunnerManager {
 		const status = await this.guest.status(s.vm);
 		if (status === "missing") {
 			this.unusable.add(s.vm);
-			this.log(`${s.vm}: has no GitHub runner (make runner VMs with: boxery new NAME --headless --layers github-runner); not using it`);
+			this.log(`${s.vm}: has no GitHub runner (make runner VMs with: ${hint("new NAME --headless --layers github-runner")}); not using it`);
 			return false;
 		}
 		if (status !== "none") { this.log(`${s.vm}: not ready for a runner (${status})`); return false; }
@@ -626,7 +626,7 @@ function lockManager(conf) {
  *  how often a runner is checked (default 15). @param {Runtime} rt */
 async function runManager(rt) {
 	const config = loadRunnerConfig(rt.conf);
-	if (!readGithubToken(rt.conf)) fail(`no GitHub token in ${path.join(rt.conf, TOKEN_FILE)} (boxery-host runners token < FILE)`);
+	if (!readGithubToken(rt.conf)) fail(`no GitHub token in ${path.join(rt.conf, TOKEN_FILE)} (${hint("runners token < FILE")})`);
 	const unlock = lockManager(rt.conf);
 	const stopFile = path.join(rt.conf, STOP_FILE);
 	rmSync(stopFile, { force: true }); // from a `runners stop` that didn't finish
@@ -716,13 +716,13 @@ async function localRunner(rt, args) {
 	if (labels.length > 90 || !labels.every((l) => LABEL.test(l))) fail("labels are [A-Za-z0-9._-], at most 64 characters each");
 	const db = rt.db();
 	const pool = leases.list(db);
-	if (!pool.length) fail("the pool is empty: make runner VMs (boxery new NAME --headless --layers github-runner) and add them (boxery pool add NAME)");
+	if (!pool.length) fail(`the pool is empty: make runner VMs (${hint("new NAME --headless --layers github-runner")}) and add them (${hint("pool add NAME")})`);
 	const configured = readConfig(rt.conf)?.vms;
 	/** @type {string[]} */
 	const vms = [...new Set(opts.vms ? opts.vms.split(",").filter(Boolean)
 		: Array.isArray(configured) && configured.length ? configured.map(String) : pool.map((r) => r.name))];
 	const outside = vms.filter((v) => !pool.some((r) => r.name === v));
-	if (outside.length) fail(`not pool VMs: ${outside.join(", ")} (boxery pool add NAME)`);
+	if (outside.length) fail(`not pool VMs: ${outside.join(", ")} (${hint("pool add NAME")})`);
 	const guest = hostGuest(rt);
 	// Skip free VMs without the runner (an agent's pool VM): leasing one only to give it back would reset it.
 	const missing = new Set((await Promise.all(pool.filter((r) => vms.includes(r.name) && r.state === "FREE")
@@ -764,10 +764,10 @@ async function localRunner(rt, args) {
 	if (result.outcome === "busy" || result.outcome === "unusable") {
 		const rows = leases.list(db).filter((r) => vms.includes(r.name));
 		const why = rows.map((r) => `${r.name}: ${missing.has(r.name) || m.unusable.has(r.name) ? "no runner" : r.state === "LEASED" ? `leased to ${r.holder}` : r.state.toLowerCase()}`).join(", ");
-		const hint = rows.some((r) => r.holder === HOLDER) ? "; host runners keep their VMs while they run (boxery runners stop frees them)" : "";
+		const held = rows.some((r) => r.holder === HOLDER) ? `; host runners keep their VMs while they run (${hint("runners stop")} frees them)` : "";
 		return fail(result.outcome === "busy"
-			? `no free runner VM (${why})${hint}. Try again when one is free, or pass --vms NAME,… with other pool VMs`
-			: `no pool VM here can run a runner (${why}). Make runner VMs: boxery new NAME --headless --layers github-runner, then boxery pool add NAME`, 4);
+			? `no free runner VM (${why})${held}. Try again when one is free, or pass --vms NAME,… with other pool VMs`
+			: `no pool VM here can run a runner (${why}). Make runner VMs: ${hint("new NAME --headless --layers github-runner")}, then ${hint("pool add NAME")}`, 4);
 	}
 	emit(result.outcome);
 	if (result.outcome !== "exited") process.exitCode = 1;
@@ -808,7 +808,7 @@ async function serviceState(rt) {
 async function service(rt, action) {
 	if (action === "start") {
 		loadRunnerConfig(rt.conf);
-		if (!readGithubToken(rt.conf)) fail(`no GitHub token yet: boxery-host runners token < FILE`);
+		if (!readGithubToken(rt.conf)) fail(`no GitHub token yet: ${hint("runners token < FILE")}`);
 	}
 	const [file, text] = unitFile(rt);
 	// A stop gives back idle runners: the manager reads this file when SIGTERM comes (runManager).
@@ -866,11 +866,11 @@ function configure(rt, args) {
 	/** @type {string[]} */
 	let outside = [];
 	try { outside = checked.vms.filter((v) => !leases.get(rt.db(), v)); } catch { /* no lease store yet */ }
-	if (outside.length) log(`warning: not in the pool yet: ${outside.join(", ")} (the manager leases pool VMs only: boxery pool add NAME)`);
+	if (outside.length) log(`warning: not in the pool yet: ${outside.join(", ")} (the manager leases pool VMs only: ${hint("pool add NAME")})`);
 	if (args.length) {
 		mkdirSync(rt.conf, { recursive: true });
 		writePrivate(path.join(rt.conf, CONFIG_FILE), `${JSON.stringify(checked, null, 2)}\n`);
-		log(`runner configuration saved${existsSync(path.join(rt.conf, STATE_FILE)) ? ` (a running manager picks it up when restarted: boxery-host runners stop && boxery-host runners start)` : ""}`);
+		log(`runner configuration saved${existsSync(path.join(rt.conf, STATE_FILE)) ? ` (a running manager picks it up when restarted: ${hint("runners stop")} && ${hint("runners start")})` : ""}`);
 	}
 	print(JSON.stringify(checked, null, 2));
 }
@@ -903,9 +903,9 @@ async function status(rt, arg) {
 	if (arg === "--json") return print(JSON.stringify(out));
 	const c = typeof checked === "object" && checked ? checked : null;
 	print(table([10], [
-		["config", c ? `${c.repo ? `repo ${c.repo}` : `org ${c.org}`}, ${c.count} runner(s) on ${c.vms.join(" ")}` : typeof checked === "string" ? `invalid: ${checked}` : "not configured (boxery-host runners config …)"],
+		["config", c ? `${c.repo ? `repo ${c.repo}` : `org ${c.org}`}, ${c.count} runner(s) on ${c.vms.join(" ")}` : typeof checked === "string" ? `invalid: ${checked}` : `not configured (${hint("runners config …")})`],
 		...(c ? [["labels", runnerLabels(c.labels, guestArch(rt.env)).join(" ")], ["names", `${c.prefix}-VM-…, group ${c.group}, lease ttl ${c.ttl}s, ${c.api}`]] : []),
-		["token", tokenProblem ?? (token ? `set (${path.join(rt.conf, TOKEN_FILE)})` : "not set (boxery-host runners token < FILE)")],
+		["token", tokenProblem ?? (token ? `set (${path.join(rt.conf, TOKEN_FILE)})` : `not set (${hint("runners token < FILE")})`)],
 		["service", `${rt.runnersUnit}: ${out.service.state}`],
 	]));
 	if (vms.length || local.length) {

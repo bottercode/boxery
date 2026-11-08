@@ -21,6 +21,16 @@ export const USAGE = 2;
 export const usage = (command, opts) => die(usageText(command, opts), USAGE);
 /** Exit with CODE, saying nothing (what failed has already said why). @param {number} exitCode @returns {never} */
 export const quit = (exitCode) => { throw new CliError("", exitCode); };
+/** How the person ran boxery: `boxery`, or `boxery --host NAME` when they named the host. Commands that
+ *  hints suggest start with it, and so do the host's: it is BOXERY_CLI in the environment host commands
+ *  get (core/ssh-config.mjs remoteCommand; host/util.mjs hint). (Plain ls asks every host with `boxery`:
+ *  its host output is --json, with no hints.) */
+export let BOXERY = "boxery";
+/** @param {string} explicitHost the NAME of --host NAME, or "" */
+export function invokedAs(explicitHost) {
+	BOXERY = explicitHost ? `boxery --host ${explicitHost}` : "boxery";
+	process.env.BOXERY_CLI = BOXERY;
+}
 /** @param {string} message */
 export const warn = (message) => { process.stderr.write(`boxery: ${message}\n`); };
 /** A line on stdout. @param {string} text */

@@ -166,6 +166,13 @@ rc=0; out=$("$A" run w1 bash -c 'exit 255' 2>&1) || rc=$?
 [ "$("$A" leases --json)" = '[]' ] && ok "leases --json with none → []" || bad "leases --json empty"
 [ "$("$A" grants nogrants --json)" = '[]' ] && ok "grants --json with none → []" || bad "grants --json empty"
 "$A" snap w1 s1 >/dev/null 2>&1; [ "$("$A" snaps w1 --json | jq -c 'map({name})')" = '[{"name":"s1"}]' ] && ok "snaps --json via controller" || bad "snaps --json: $("$A" snaps w1 --json 2>&1)"
+# Hints name the command the person typed: boxery-host only when it was called directly, --host when given
+hints() { { "$@" >/dev/null; } 2>&1 || true; }
+[[ $(hints "$A" snap w1 s1) == *"exists (boxery snap-rm w1 s1)"* ]] && ok "host hint through boxery" || bad "host hint: $(hints "$A" snap w1 s1)"
+[[ $(hints "$A" --host local snap w1 s1) == *"exists (boxery --host local snap-rm w1 s1)"* ]] && ok "host hint through boxery --host NAME" || bad "host hint --host: $(hints "$A" --host local snap w1 s1)"
+[[ $(hints "$HOSTBIN" snap w1 s1) == *"exists (boxery-host snap-rm w1 s1)"* ]] && ok "host hint from boxery-host itself" || bad "host hint direct: $(hints "$HOSTBIN" snap w1 s1)"
+[[ $(hints "$A" --host local run w1 echo "\$HOME/x") == *"to expand it in the VM: boxery --host local run w1 bash -c"* ]] && ok "run's note keeps --host" || bad "run note --host: $(hints "$A" --host local run w1 echo "\$HOME/x")"
+[[ $(hints "$A" run w1 echo "\$HOME/x") == *"to expand it in the VM: boxery run w1 bash -c"* ]] && ok "run's note without --host" || bad "run note: $(hints "$A" run w1 echo "\$HOME/x")"
 "$A" rm w1 >/dev/null 2>&1 && [[ ! -f $P/grants/w1 ]] && ! grep -q '^Host w1.boxery' "$P/ssh_config" && ok "rm clears grants + ForwardAgent" || bad "rm cleanup"
 
 # --- edge (http:) grants: secret goes to the host proxy's route file, never into the VM

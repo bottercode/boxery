@@ -106,7 +106,10 @@ sed -i.bak 's/^layers_hash=.*/layers_hash=0000/' "$(r d1)/etc/boxery/build-info"
 [[ $(status d1) == "current " ]] && ok "ls reads the host's record, not the guest" || bad "d1: $(status d1)"
 "$H" ls --refresh >/dev/null 2>"$tmp/err"
 [[ $(status d1) == "outdated layers changed" ]] && ok "built with other layers → outdated (layers changed)" || bad "d1: $(status d1)"
-grep -q 'outdated guest software: d1 (layers changed). Update with: boxery patch NAME|--all' "$tmp/err" && ok "ls says how to update it" || bad "hint: $(cat "$tmp/err")"
+grep -q 'outdated guest software: d1 (layers changed). Update with: boxery-host patch NAME|--all' "$tmp/err" && ok "ls says how to update it" || bad "hint: $(cat "$tmp/err")"
+# Called through the controller (BOXERY_CLI says how), the hint names what the person typed; anything else isn't trusted.
+BOXERY_CLI="boxery --host lab" "$H" ls 2>&1 >/dev/null | grep -q 'Update with: boxery --host lab patch NAME|--all' && ok "through boxery --host lab: the hint names it" || bad "hint via the controller: $(BOXERY_CLI="boxery --host lab" "$H" ls 2>&1 >/dev/null)"
+BOXERY_CLI='rm -rf / #' "$H" ls 2>&1 >/dev/null | grep -q 'Update with: boxery-host patch' && ok "an unexpected BOXERY_CLI is ignored" || bad "odd BOXERY_CLI: $(BOXERY_CLI='rm -rf / #' "$H" ls 2>&1 >/dev/null)"
 "$H" ls 2>/dev/null | grep -q '^d1 .* outdated$' && ok "ls: GUEST outdated" || bad "ls: $("$H" ls 2>&1)"
 "$H" snap d1 old >/dev/null 2>&1
 mv "$(r d1)/etc/boxery/build-info.bak" "$(r d1)/etc/boxery/build-info"
@@ -165,7 +168,7 @@ grep -q 'captured its clean image p1@boxery-clean again' "$tmp/err" && ok "...an
 out=$(echo "$K1" | "$H" acquire --holder alice --ttl 600 2>/dev/null); lease=$(awk '{print $2}' <<<"$out")
 [[ $lease == l-* ]] && ok "lease p1" || bad "acquire: $out"
 if "$H" patch p1 >/dev/null 2>"$tmp/err"; then bad "patched a leased VM"; else
-	grep -q 'p1 is a pool VM with an active lease (leased); patch it after the lease ends (or: patch p1 --wait S)' "$tmp/err" && ok "a leased pool VM is refused" || bad "err: $(cat "$tmp/err")"; fi
+	grep -q 'p1 is a pool VM with an active lease (leased); patch it after the lease ends (or: boxery-host patch p1 --wait S)' "$tmp/err" && ok "a leased pool VM is refused" || bad "err: $(cat "$tmp/err")"; fi
 if "$H" patch p1 --wait 1 >/dev/null 2>"$tmp/err"; then bad "--wait patched a leased VM"; else
 	grep -q 'p1 is leased; waiting up to 1s' "$tmp/err" && grep -q 'active lease' "$tmp/err" && ok "--wait S: refused once S runs out" || bad "err: $(cat "$tmp/err")"; fi
 echo leftover >"$(r p1)/lease-work"

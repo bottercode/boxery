@@ -12,7 +12,7 @@ import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
-import { CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { BOXERY, CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, invokedAs, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
 import { registerCommands, renderCommand, renderTop, resolve, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
 
@@ -114,7 +114,7 @@ async function cmdRun(s, args) {
 		const { startJob } = await import("./jobs.mjs");
 		const id = await startJob(s, name, argvRaw, cwd ? cwdRaw : null);
 		say(id);
-		note(`boxery: started ${id} on ${name}   logs: boxery logs ${name} ${id} -f   wait: boxery wait ${name} ${id}`);
+		note(`boxery: started ${id} on ${name}   logs: ${BOXERY} logs ${name} ${id} -f   wait: ${BOXERY} wait ${name} ${id}`);
 		literalNote(name, argv);
 		return;
 	}
@@ -126,7 +126,7 @@ async function cmdRun(s, args) {
 	if (hasRawBytes([...argvRaw, cwdRaw])) line = `eval "$(printf %s ${rawLine(argvRaw, cwd ? cwdRaw : null).toString("base64")} | base64 -d)"`;
 	const rc = await vmSsh(s, [`${name}.boxery`, line]);
 	// The usual mistake is a whole command line in one argument; say how to run it instead.
-	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: boxery run ${name} bash -c ${literal(argv[0])}`);
+	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: ${BOXERY} run ${name} bash -c ${literal(argv[0])}`);
 	literalNote(name, argv);
 	if (rc) throw new CliError("", rc);
 }
@@ -153,7 +153,7 @@ function rawLine(argv, cwd) {
 function literalNote(name, argv) {
 	if (["bash", "sh", "dash", "zsh", "awk", "gawk", "mawk", "perl", "jq", "sed", "python", "python3", "node", "ruby"].includes(path.basename(argv[0]))) return;
 	const a = argv.find((x) => x === "~" || x.startsWith("~/") || /\$[A-Z]/.test(x) || x.includes("${"));
-	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: boxery run ${name} bash -c '…'`);
+	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: ${BOXERY} run ${name} bash -c '…'`);
 }
 
 /** attach NAME [pi|opencode|shell] [session] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -163,7 +163,7 @@ async function cmdAttach(s, [name = "", tool = "pi", sess = tool]) {
 	if (!Object.hasOwn(run, tool)) die(`unknown agent: ${tool} (pi, opencode or shell)`, 2);
 	if (!/^[A-Za-z0-9._-]+$/.test(sess)) die(`invalid session name: ${sess}`);
 	// (Without one, tmux says only "open terminal failed: not a terminal".)
-	if (!process.stdin.isTTY) die(`attach needs a terminal; for headless work use boxery prompt ${name} "TASK" or boxery run --bg ${name} CMD`);
+	if (!process.stdin.isTTY) die(`attach needs a terminal; for headless work use ${BOXERY} prompt ${name} "TASK" or ${BOXERY} run --bg ${name} CMD`);
 	await (await grants()).reapplyQuiet(s, name);
 	// tmux keeps the agent alive when you disconnect (laptop sleep, network change).
 	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run[tool]}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
@@ -223,7 +223,7 @@ async function cmdPrompt(s, [name = "", ...words]) {
 		printf '%s\\n' '#!/bin/bash -l' 'cd ~/project' 'pi -p "$(cat .boxery/${id}.prompt)" </dev/null 2>&1 | tee .boxery/${id}.log' 'echo "[boxery] task finished (exit \${PIPESTATUS[0]})" | tee -a .boxery/${id}.log' 'exec bash -l' > $d/${id}.sh
 		chmod +x $d/${id}.sh; tmux new-session -d -s ${id} -c ~/project $d/${id}.sh`;
 	await exitWith(vmSsh(s, [`${name}.boxery`, script]));
-	say(`started ${id} on ${name} — watch: boxery attach ${name} pi ${id}   log: boxery run ${name} cat .boxery/${id}.log`);
+	say(`started ${id} on ${name} — watch: ${BOXERY} attach ${name} pi ${id}   log: ${BOXERY} run ${name} cat .boxery/${id}.log`);
 }
 
 /** A VM has no LLM access until it is granted, and pi without it fails at once: say so before starting a
@@ -236,7 +236,7 @@ async function needPiGrant(s, name) {
 	if (r.code) throw new CliError("", r.code); // (ssh said why)
 	const [settings, projectSettings, models] = r.stdout.split("\x1e").slice(-3);
 	const spec = (await import("../core/grants.mjs")).missingPiGrant(name, { settings, projectSettings, models });
-	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: boxery grant ${name} ${spec}`);
+	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: ${BOXERY} grant ${name} ${spec}`);
 }
 
 /** cp FROM TO: vm_copy's own code. Needs only the profile's ssh_config, not the host. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -673,6 +673,7 @@ async function main(argv) {
 	const name = explicit || defaultHost();
 	if (!name) die("no host configured; run: boxery setup user@host|local (or boxery host use NAME)");
 	if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) die(`invalid host name: ${name}`);
+	invokedAs(explicit);
 	let dir;
 	if (pinned) {
 		if (!path.isAbsolute(pinned)) die(`invalid profile directory: ${pinned}`);
