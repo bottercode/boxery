@@ -159,11 +159,14 @@ function literalNote(name, argv) {
 /** attach NAME [pi|opencode|shell] [session] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
 async function cmdAttach(s, [name = "", tool = "pi", sess = tool]) {
 	needVm(name);
+	const run = /** @type {Record<string, string>} */ ({ pi: "pi", opencode: "opencode", shell: "bash -l" });
+	if (!Object.hasOwn(run, tool)) die(`unknown agent: ${tool} (pi, opencode or shell)`, 2);
 	if (!/^[A-Za-z0-9._-]+$/.test(sess)) die(`invalid session name: ${sess}`);
-	const run = { pi: "pi", opencode: "opencode", shell: "bash -l" }[tool] ?? tool;
+	// (Without one, tmux says only "open terminal failed: not a terminal".)
+	if (!process.stdin.isTTY) die(`attach needs a terminal; for headless work use boxery prompt ${name} "TASK" or boxery run --bg ${name} CMD`);
 	await (await grants()).reapplyQuiet(s, name);
 	// tmux keeps the agent alive when you disconnect (laptop sleep, network change).
-	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
+	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run[tool]}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
 	if (rc) throw new CliError("", rc);
 }
 
@@ -474,7 +477,7 @@ export const COMMANDS = {
 	attach: {
 		help: {
 			group: "use", summary: "attach to an agent in a persistent tmux session", list: "attach NAME [AGENT]", usage: ["attach NAME [pi|opencode|shell] [SESSION]"],
-			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect."], seeAlso: ["sessions", "prompt"],
+			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect. It needs a terminal; for headless work use prompt or run --bg."], seeAlso: ["sessions", "prompt"],
 		},
 		run: async (s, args) => { needHost(s); await cmdAttach(s, args); },
 	},
