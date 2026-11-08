@@ -127,6 +127,10 @@ if out=$("$A" prompt w1 say hi 2>&1) || [[ $out != *"needs llm:chatgpt"* ]]; the
 rm "$tmp/vms/w1/login-output"
 "$A" grant w1 llm:chatgpt >/dev/null 2>&1
 out=$("$A" prompt w1 say hi 2>&1) && [[ $out == *"started task-"* ]] && ok "prompt with pi's llm grant starts the task" || bad "prompt with the grant: $out"
+# The log hint works as printed: run starts in ~/project. (tmux is a stub here, so write the log ourselves.)
+log=$(sed -n 's/.*log: boxery run w1 cat \(\.boxery\/task-[0-9-]*\.log\)$/\1/p' <<<"$out")
+[[ -n $log ]] && echo "task log" >"$tmp/vms/w1/home/project/$log"
+[[ -n $log && $("$A" run w1 cat "$log" 2>&1) == "task log" ]] && ok "prompt's log hint names the log under ~/project" || bad "prompt log hint: $out"
 "$A" revoke w1 llm:chatgpt >/dev/null 2>&1
 rm -f "$tmp/bin/tmux"
 # A VM that doesn't exist (#210): ssh exits 255, and ControlPersist would hide the host's reason, so the
