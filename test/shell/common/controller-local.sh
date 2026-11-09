@@ -443,4 +443,71 @@ rc=0; out=$("$A" desktop -oProxyCommand=x --no-open 2>&1) || rc=$?
 rm -f "$tmp/bin/boxery-vnc-password" "$tmp/bin/vncpasswd"; unset XDG_RUNTIME_DIR
 "$A" rm d1 >/dev/null 2>&1 || true
 
+# ---- terminal status (OSC 7501): reported on stderr, only for a terminal, from one seam in the dispatcher
+"$A" new st1 >/dev/null 2>&1
+reports() { # FILE → one "STATE APP MSG" line per OSC 7501 report in FILE, the msg decoded
+	python3 - "$1" <<'PY'
+import base64, re, sys
+for m in re.finditer(rb"\x1b\]7501;([^\x1b]*)\x1b\\", open(sys.argv[1], "rb").read()):
+    kv = dict(p.split(b"=", 1) for p in m.group(1).split(b":"))
+    print(kv[b"state"].decode(), kv.get(b"app", b"").decode(), base64.b64decode(kv.get(b"msg", b"")).decode())
+PY
+}
+cat >"$tmp/ptyrun.py" <<'PY'
+import os, pty, select, signal, sys, time
+# ptyrun.py [--int-on TEXT] CMD ARG...: run CMD on a pty, print what it wrote, then rc=N. --int-on: press Ctrl-C
+# once TEXT has appeared in its output (not after a guessed delay: a slow machine would send it too early).
+args = sys.argv[1:]; int_on = None
+if args[0] == "--int-on": int_on = args[1].encode(); args = args[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    signal.signal(signal.SIGINT, signal.SIG_DFL)   # a test run in the background starts with SIGINT ignored, which a trap can't undo
+    os.execvp(args[0], args)
+out = b""; seen = None; sent = False; end = time.time() + 60
+while time.time() < end:
+    if int_on is not None and not sent and seen is not None and time.time() - seen > 0.5:
+        os.killpg(os.getpgid(pid), signal.SIGINT); sent = True   # what Ctrl-C does: the whole foreground group
+    r, _, _ = select.select([fd], [], [], 0.1)
+    if r:
+        try: d = os.read(fd, 65536)
+        except OSError: break
+        if not d: break
+        out += d
+        if int_on is not None and seen is None and int_on in out: seen = time.time()
+status = os.waitpid(pid, 0)[1]
+sys.stdout.buffer.write(out)
+print("\nrc=%d" % (os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status)))
+PY
+if command -v python3 >/dev/null 2>&1; then
+	rc=0; BOXERY_STATUS=1 "$A" run st1 true 2>"$tmp/err" || rc=$?
+	[ "$rc" = 0 ] && [ "$(reports "$tmp/err")" = "$(printf 'working boxery st1: run\ndone boxery st1: run done')" ] &&
+		ok "status: run reports working, then done, and names the VM" || bad "status run: rc=$rc $(reports "$tmp/err")"
+	rc=0; BOXERY_STATUS=1 "$A" run st1 bash -c 'exit 3' 2>"$tmp/err" || rc=$?
+	[ "$rc" = 3 ] && [ "$(reports "$tmp/err" | tail -1)" = "error boxery st1: run failed (exit 3)" ] &&
+		ok "status: a failing command reports error and keeps its exit code" || bad "status failure: rc=$rc $(reports "$tmp/err")"
+	rc=0; BOXERY_STATUS=1 "$A" run st1 true >"$tmp/out" 2>/dev/null || rc=$?
+	[ ! -s "$tmp/out" ] && ok "status: nothing on stdout (scripts read it)" || bad "status wrote to stdout: $(cat "$tmp/out")"
+	"$A" run st1 true 2>"$tmp/err"
+	[ -z "$(reports "$tmp/err")" ] && ok "status: silent when stderr is not a terminal" || bad "status, redirected: $(reports "$tmp/err")"
+	BOXERY_STATUS=0 "$A" run st1 true 2>"$tmp/err"
+	[ -z "$(reports "$tmp/err")" ] && ok "status: BOXERY_STATUS=0 turns it off" || bad "status, BOXERY_STATUS=0: $(reports "$tmp/err")"
+	n=0; for line in "ls" "jobs st1" "run --bg st1 true" "run --help" "logs st1 j-none" "acquire"; do
+		# shellcheck disable=SC2086  # the words of $line are the arguments
+		BOXERY_STATUS=1 "$A" $line >/dev/null 2>"$tmp/err" || true
+		[ -z "$(reports "$tmp/err")" ] || { n=1; bad "status: 'boxery $line' reported: $(reports "$tmp/err")"; }
+	done
+	[ "$n" = 0 ] && ok "status: quick, backgrounded and help invocations don't report"
+	TERM=xterm python3 "$tmp/ptyrun.py" "$A" run st1 true >"$tmp/pty.out" 2>&1
+	[ "$(reports "$tmp/pty.out")" = "$(printf 'working boxery st1: run\ndone boxery st1: run done')" ] && grep -q '^rc=0$' "$tmp/pty.out" &&
+		ok "status: on by itself when stderr is a terminal" || bad "status on a pty: $(reports "$tmp/pty.out") $(tail -1 "$tmp/pty.out")"
+	TERM=dumb python3 "$tmp/ptyrun.py" "$A" run st1 true >"$tmp/pty.out" 2>&1
+	[ -z "$(reports "$tmp/pty.out")" ] && ok "status: silent on TERM=dumb" || bad "status, TERM=dumb: $(reports "$tmp/pty.out")"
+	TERM=xterm python3 "$tmp/ptyrun.py" --int-on 'state=working' "$A" run st1 sleep 30 >"$tmp/pty.out" 2>&1
+	[ "$(reports "$tmp/pty.out")" = "$(printf 'working boxery st1: run\nidle boxery st1: run stopped')" ] && ! grep -q '^rc=0$' "$tmp/pty.out" &&
+		ok "status: Ctrl-C reports idle (not an error) and the command still fails" || bad "status, Ctrl-C: $(reports "$tmp/pty.out") $(tail -1 "$tmp/pty.out")"
+else
+	echo "  - status: python3 not found, skipping the pty tests"
+fi
+"$A" rm st1 >/dev/null 2>&1 || true
+
 echo; echo "passed: $pass  failed: $fail"; [ "$fail" -eq 0 ]
