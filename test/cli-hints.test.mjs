@@ -75,6 +75,19 @@ test("background-job hints use canonical actions and retain an explicit host, no
 	assert.equal(readFileSync(path.join(home, "default-host"), "utf8"), "alpha\n");
 });
 
+test("job argument errors keep missing-id usage status and invalid-id failure status with scoped hints", () => {
+	for (const command of [["logs"], ["wait"], ["kill"], ["job", "logs"], ["job", "wait"], ["job", "kill"]]) {
+		for (const prefix of [[], ["--host", "beta"]]) for (const job of [undefined, "", "nope"]) {
+			const r = run([...prefix, ...command, "demo", ...(job === undefined ? [] : [job])]);
+			assert.equal(r.status, job ? 1 : 2, r.stderr);
+			assert.equal(r.stdout, "");
+			const reason = job ? `invalid job id: ${job}` : "missing job id";
+			assert.equal(r.stderr, `boxery: ${reason} (see: ${["boxery", ...prefix, "job", "ls", "NAME"].join(" ")})\n`);
+		}
+	}
+	assert.equal(readFileSync(path.join(home, "default-host"), "utf8"), "alpha\n");
+});
+
 test("headless grant guidance is canonical, host-pinned and safely copyable; approval still refuses", () => {
 	const command = "printf '%s' 'a b;$HOME'";
 	for (const prefix of [[], ["--host", "beta"]]) {
