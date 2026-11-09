@@ -53,6 +53,10 @@ export const unknownCommand = (table, word) => help.unknownCommand(CLI, table, w
 
 /** The command table (cli.mjs registers it as it loads), for usage errors raised in the modules it calls. @type {Record<string, HelpEntry>} */
 let TABLE = {};
+/** A copyable canonical command, checked against the same table used for dispatch and help.
+ *  @param {string} command @param {string[]} [args] @param {string[]} [prefix] */
+export const commandRef = (command, args = [], prefix = []) => help.commandRef(CLI, TABLE, command, args, prefix);
+
 /** A family's usage lines are its actions' (and its `list` the action names): filled in here, so the two can't differ. @param {Record<string, HelpEntry>} table */
 export function registerCommands(table) {
 	TABLE = table;
