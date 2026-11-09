@@ -18,12 +18,23 @@ export const DOCS = "https://github.com/modem-dev/boxery/blob/master/docs/";
  * @property {string[]} [seeAlso]
  * @property {string} [docs]    page#anchor under docs/
  */
-/** @typedef {{ help?: Help, alias?: string }} HelpEntry */
+/**
+ * One action of a command family (`boxery snapshot create`). `command` names the command whose handler runs it:
+ * the action's help is that command's, respelled (its usage lines, examples and see-also start with
+ * "snapshot create" instead of "snap"). `help` replaces what doesn't fit. An action without `command` is
+ * the family's own (host's registry actions).
+ * @typedef {object} Action
+ * @property {string} [command]
+ * @property {Partial<Help>} [help]
+ */
+/** @typedef {{ help?: Help, alias?: string, actions?: Record<string, Action> }} HelpEntry */
 /**
  * A CLI: its name, its groups (in order), and what `PROG help` says around the list.
  * @typedef {object} Cli
  * @property {string} program
- * @property {Record<string, string>} groups   key → section title
+ * @property {Record<string, string>} groups   key → section title, in the order `PROG help` lists them
+ * @property {string[]} [hidden]   groups only `PROG help --all` lists (older spellings)
+ * @property {string} [families]   the group of the command families: `help --all` follows it with a section for each family's actions
  * @property {string} title     the first line of `PROG help`
  * @property {string} usage     the Usage line, without the program name
  * @property {[string, string][]} options
@@ -66,23 +77,85 @@ function columns(rows, width, indent = "  ") {
 /** @param {Record<string, HelpEntry>} table @returns {[string, Help][]} */
 const helped = (table) => Object.entries(table).flatMap(([n, e]) => (e.help ? [/** @type {[string, Help]} */ ([n, e.help])] : []));
 
-/** `PROG help`. @param {Cli} cli @param {Record<string, HelpEntry>} table */
-export function renderTop(cli, table) {
-	const entries = helped(table), width = cli.width ?? 28;
-	const sections = Object.entries(cli.groups).flatMap(([g, title]) => {
-		const rows = entries.filter(([, h]) => h.group === g).map(([n, h]) => /** @type {[string, string]} */ ([listLine(n, h), sentence(h.summary)]));
-		return rows.length ? [`${bold(`${title}:`)}\n${columns(rows, width)}`] : [];
-	});
+/** The family actions a command's handler also serves (grants serves both access ls and access apply). @param {Record<string, HelpEntry>} table @param {string} command */
+function familyActions(table, command) {
+	return Object.entries(table).flatMap(([f, e]) => Object.entries(e.actions ?? {}).flatMap(([a, x]) => x.command === command ? [`${f} ${a}`] : []));
+}
+
+/** How a see-also names COMMAND: by its family action when the command is an older spelling, else as is. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} command */
+function spelling(cli, table, command) {
+	const [fa] = familyActions(table, command);
+	return fa && cli.hidden?.includes(table[command]?.help?.group ?? "") ? fa : command;
+}
+
+/**
+ * The help of FAMILY's ACTION, or null: its command's, respelled as the action unless the action says otherwise.
+ * @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} family @param {string} action @returns {Help | null}
+ */
+export function actionHelp(cli, table, family, action) {
+	const actions = Object.hasOwn(table, family) ? table[family].actions : undefined;
+	if (!actions || !Object.hasOwn(actions, action)) return null;
+	const a = actions[action], name = `${family} ${action}`;
+	const base = a.command ? table[a.command]?.help : undefined;
+	const h = { ...base, ...a.help };
+	const { summary, usage } = h;
+	if (!summary || !usage) throw new Error(`${name}: no help (an action without a command needs a summary and usage)`);
+	const start = a.command ? new RegExp(`^(${cli.program} (?:--host \\S+ )?)?${a.command}(?=\\s|$)`) : null;
+	const respell = (/** @type {string} */ line) => (start ? line.replace(start, (_, p = "") => `${p}${name}`) : line);
+	return {
+		...h, summary, group: table[family].help?.group ?? "",
+		usage: a.help?.usage ?? usage.map(respell),
+		list: a.help?.list ?? (h.list && !a.help?.usage ? respell(h.list) : undefined),
+		examples: a.help?.examples ?? h.examples?.map(([c, l]) => /** @type {[string, string]} */ ([c, respell(l)])),
+		seeAlso: a.help?.seeAlso ?? h.seeAlso?.map((c) => spelling(cli, table, c)),
+	};
+}
+
+/** @typedef {{ left: string, usage: string[], text: string, docs?: string, name: string }} Row */
+/** The command list as sections of rows: `PROG help`'s, and with ALL (`help --all`) also each family's actions and the hidden groups. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {boolean} all @returns {{ title: string, rows: Row[] }[]} */
+function sections(cli, table, all) {
+	const entries = helped(table);
+	/** @type {{ title: string, rows: Row[] }[]} */
+	const out = [];
+	for (const [g, title] of Object.entries(cli.groups)) {
+		if (!all && cli.hidden?.includes(g)) continue;
+		const rows = entries.filter(([, h]) => h.group === g).map(([n, h]) => {
+			const fa = familyActions(table, n).join(" | ");
+			return { name: n, left: listLine(n, h), usage: h.usage, text: `${sentence(h.summary)}${fa ? ` (= ${fa})` : ""}`, docs: h.docs };
+		});
+		if (rows.length) out.push({ title, rows });
+		if (!all || g !== cli.families) continue;
+		for (const [f, e] of Object.entries(table)) {
+			if (!e.actions || !e.help || e.help.group !== g) continue;
+			const acts = Object.keys(e.actions).flatMap((a) => { const h = actionHelp(cli, table, f, a); return h ? [[a, h]] : []; });
+			out.push({ title: `${cli.program} ${f} — ${e.help.summary}`, rows: acts.map(([a, h]) => ({ name: `${f} ${a}`, left: listLine(`${f} ${a}`, /** @type {Help} */ (h)), usage: /** @type {Help} */ (h).usage, text: sentence(/** @type {Help} */ (h).summary), docs: /** @type {Help} */ (h).docs })) });
+		}
+	}
+	return out;
+}
+
+/** `PROG help`; with ALL, `PROG help --all`. @param {Cli} cli @param {Record<string, HelpEntry>} table */
+export function renderTop(cli, table, all = false) {
+	const width = cli.width ?? 28;
+	const list = sections(cli, table, all).map(({ title, rows }) => `${bold(`${title}:`)}\n${columns(rows.map((r) => [r.left, r.text]), width)}`);
 	return `${cli.title}
 
 ${bold("Usage:")}
   ${cli.program} ${cli.usage}
 
-${sections.join("\n\n")}
+${list.join("\n\n")}
 
 ${bold("Options:")}
 ${columns(cli.options, width)}
 ${cli.footer ? `\n${cli.footer}\n` : ""}`;
+}
+
+/** A help page's last parts: examples, see-also and docs, after OUT. @param {Cli} cli @param {string[]} out @param {Help} h */
+function page(cli, out, h) {
+	if (h.examples?.length) out.push(`${bold("Examples:")}\n${h.examples.map(([c, l]) => `  ${dim(`# ${c}`)}\n  ${l}`).join("\n\n")}`);
+	const more = [h.seeAlso?.length ? `See also: ${h.seeAlso.map((c) => `${cli.program} ${c}`).join(", ")}` : "", h.docs ? `Docs: ${DOCS}${h.docs}` : ""].filter(Boolean);
+	if (more.length) out.push(more.join("\n"));
+	return `${out.join("\n\n")}\n`;
 }
 
 /** `PROG COMMAND --help`. @param {Cli} cli @param {string} _name @param {Help} h */
@@ -90,25 +163,32 @@ export function renderCommand(cli, _name, h) {
 	const out = [`${bold("Usage:")}\n${h.usage.map((u) => `  ${cli.program} ${u}`).join("\n")}`, `${sentence(h.summary)}.`];
 	if (h.details?.length) out.push(h.details.join("\n\n"));
 	if (h.flags?.length) out.push(`${bold("Options:")}\n${columns(h.flags, Math.min(24, Math.max(...h.flags.map(([f]) => f.length))))}`);
-	if (h.examples?.length) out.push(`${bold("Examples:")}\n${h.examples.map(([c, l]) => `  ${dim(`# ${c}`)}\n  ${l}`).join("\n\n")}`);
-	const more = [h.seeAlso?.length ? `See also: ${h.seeAlso.map((c) => `${cli.program} ${c}`).join(", ")}` : "", h.docs ? `Docs: ${DOCS}${h.docs}` : ""].filter(Boolean);
-	if (more.length) out.push(more.join("\n"));
-	return `${out.join("\n\n")}\n`;
+	return page(cli, out, h);
 }
 
-/** A command reference for docs/ (scripts/docs-cli.mjs writes it between markers): a table per group. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} page the docs page it goes in */
+/** `PROG FAMILY --help`: its actions, then what a command's page has. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} family */
+export function renderFamily(cli, table, family) {
+	const h = /** @type {Help} */ (table[family].help), names = Object.keys(table[family].actions ?? {});
+	const rows = names.map((a) => /** @type {[string, string]} */ ([a, sentence(actionHelp(cli, table, family, a)?.summary ?? "")]));
+	const out = [`${bold("Usage:")}\n${h.usage.map((u) => `  ${cli.program} ${u}`).join("\n")}`, `${sentence(h.summary)}.`];
+	if (h.details?.length) out.push(h.details.join("\n\n"));
+	out.push(`${bold("Actions:")}\n${columns(rows, Math.max(...names.map((a) => a.length)))}\n\n${cli.program} ${family} ACTION --help shows an action's options.`);
+	return page(cli, out, h);
+}
+
+/** A command reference for docs/ (scripts/docs-cli.mjs writes it between markers): a table per section. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} page the docs page it goes in */
 export function renderMarkdown(cli, table, page) {
 	const cell = (/** @type {string} */ s) => s.replaceAll("|", "\\|");
 	const aliases = Object.entries(table).flatMap(([n, e]) => (e.alias ? [[n, e.alias]] : []));
-	const sections = Object.entries(cli.groups).flatMap(([g, title]) => {
-		const rows = helped(table).filter(([, h]) => h.group === g).map(([n, h]) => {
-			const also = aliases.filter(([, t]) => t === n).map(([a]) => ` (also: \`${a}\`)`).join("");
-			const link = h.docs ? ` [→](${h.docs.startsWith(`${page}#`) ? h.docs.slice(page.length) : h.docs})` : "";
-			return `| ${h.usage.map((u) => `\`${cli.program} ${cell(u)}\``).join("<br>")} | ${cell(sentence(h.summary))}${also}${link} |`;
+	const parts = sections(cli, table, true).map(({ title, rows }) => {
+		const lines = rows.map((r) => {
+			const also = aliases.filter(([, t]) => t === r.name).map(([a]) => ` (also: \`${a}\`)`).join("");
+			const link = r.docs ? ` [→](${r.docs.startsWith(`${page}#`) ? r.docs.slice(page.length) : r.docs})` : "";
+			return `| ${r.usage.map((u) => `\`${cli.program} ${cell(u)}\``).join("<br>")} | ${cell(r.text)}${also}${link} |`;
 		});
-		return rows.length ? [`**${title}**\n\n| Command | What it does |\n|---|---|\n${rows.join("\n")}`] : [];
+		return `**${title}**\n\n| Command | What it does |\n|---|---|\n${lines.join("\n")}`;
 	});
-	return `${sections.join("\n\n")}\n`;
+	return `${parts.join("\n\n")}\n`;
 }
 
 /**
@@ -132,11 +212,22 @@ export function resolve(table, name) {
 	return e.alias ? (Object.hasOwn(table, e.alias) ? e.alias : null) : name;
 }
 
+/** The name nearest WORD, when one is close. @param {string} word @param {string[]} names */
+function nearest(word, names) {
+	return names.map((n) => /** @type {const} */ ([n, distance(word, n)])).filter(([n, d]) => d <= Math.max(1, Math.floor(n.length / 3)) || (word.length >= 3 && n.startsWith(word))).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0];
+}
+
 /** "unknown command", with the nearest command when there is a close one. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} word */
 export function unknownCommand(cli, table, word) {
-	const names = Object.keys(table).filter((n) => !n.startsWith("_"));
-	const near = names.map((n) => /** @type {const} */ ([n, distance(word, n)])).filter(([n, d]) => d <= Math.max(1, Math.floor(n.length / 3)) || (word.length >= 3 && n.startsWith(word))).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0];
+	const near = nearest(word, Object.keys(table).filter((n) => !n.startsWith("_")));
 	return `unknown command: ${word}${near ? ` (did you mean ${near[0]}?)` : ""}; see: ${cli.program} help`;
+}
+
+/** What a family says to an action it doesn't have (WORD) or to none: its actions and where to read more. @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} family @param {string} [word] */
+export function unknownAction(cli, table, family, word) {
+	const names = Object.keys(table[family].actions ?? {}), near = word === undefined ? undefined : nearest(word, names);
+	const what = word === undefined ? `${family} needs an action` : `unknown ${family} action: ${word}${near ? ` (did you mean ${near[0]}?)` : ""}`;
+	return `${what}; actions: ${names.join(", ")}; see: ${cli.program} ${family} --help`;
 }
 
 /** Levenshtein distance. @param {string} a @param {string} b */

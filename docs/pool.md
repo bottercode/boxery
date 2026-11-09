@@ -35,14 +35,16 @@ From an agent over MCP (or pi), with the `vm_lease` tool: `{"action":"acquire"}`
 From the CLI or scripts:
 
 ```bash
-read NAME LEASE < <(boxery acquire --ttl 1800 --wait 60)
+read NAME LEASE < <(boxery lease acquire --ttl 1800 --wait 60)
 boxery run "$NAME" make test           # runs in ~/project
-boxery renew "$NAME"             # extend
-boxery release "$NAME"           # give it back; the VM is reset
-boxery leases                    # what you hold
+boxery lease renew "$NAME"       # extend
+boxery lease release "$NAME"     # give it back; the VM is reset
+boxery lease ls                  # what you hold
 ```
 
-`acquire` exits with status 4 if no VM is free before `--wait` runs out. If you give up first (Ctrl-C), the host notices when it can't hand over a lease it got for you, gives that VM back and notes it in `lease-orphans.log` in its config directory. That needs the connection to close cleanly: if it just drops (a laptop going to sleep), sshd can hold it open for a long time, and the lease's TTL is what frees the VM.
+`acquire`, `renew`, `release` and `leases` still work as the older spellings. Borrowing is the `lease` family; adding VMs to the pool (`boxery pool add|rm|ls`) is administration.
+
+`lease acquire` exits with status 4 if no VM is free before `--wait` runs out. If you give up first (Ctrl-C), the host notices when it can't hand over a lease it got for you, gives that VM back and notes it in `lease-orphans.log` in its config directory. That needs the connection to close cleanly: if it just drops (a laptop going to sleep), sshd can hold it open for a long time, and the lease's TTL is what frees the VM.
 
 Pool VMs can also run GitHub Actions jobs, each in a freshly reset VM: the host's runner manager holds a lease per runner (holder `github-runner`) on the VMs you give it, and `boxery runners once` holds one for a single job (holder `github-runner-local`). See [GitHub Actions runners](github-runners.md).
 
