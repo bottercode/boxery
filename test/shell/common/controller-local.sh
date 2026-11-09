@@ -60,6 +60,16 @@ done
 "$A" rm hc >/dev/null 2>&1 || true
 if "$A" shapes bogus >/dev/null 2>&1; then bad "shapes bogus accepted"; else ok "shapes rejects extra args"; fi
 "$A" rm w2 >/dev/null 2>&1; "$A" rm w3 >/dev/null 2>&1
+# Usage errors exit 2 (docs/cli.md), not 1 like other failures
+for a in "run" "run w1" "resize w1" "resize w1 --cpus" "resize w1 --bogus 2" "forward w1" "forward w1 8123 abc" "prompt w1" "agent-forward w1 maybe" "new w9 --bogus" "new w9 --shape" "fork w1" "shapes bogus" "leases extra" "acquire --bogus 1" "acquire --ttl" \
+	"start" "revert w1" "new x9 --from" "setup local --name" "host use" "runners once --bogus"; do
+	# shellcheck disable=SC2086
+	rc=0; "$A" $a >/dev/null 2>&1 </dev/null || rc=$?
+	[[ $rc == 2 ]] && ok "usage error exits 2: $a" || bad "usage error $a: exit $rc"
+done
+rc=0; "$A" start 'Bad;Name' >/dev/null 2>&1 || rc=$?
+[[ $rc == 1 ]] && ok "an invalid (not missing) VM name is a failure, exit 1" || bad "start Bad;Name: exit $rc"
+[[ $("$A" --host local --version 2>/dev/null | head -1) == "controller  "* ]] && ok "--host NAME --version" || bad "--host local --version: $("$A" --host local --version 2>&1)"
 
 printf 'SECRET_FILE=1\n' >"$tmp/dev.env"
 export MY_TOKEN='va lue $with "quotes"'
@@ -127,7 +137,23 @@ if out=$("$A" prompt w1 say hi 2>&1) || [[ $out != *"needs llm:chatgpt"* ]]; the
 rm "$tmp/vms/w1/login-output"
 "$A" grant w1 llm:chatgpt >/dev/null 2>&1
 out=$("$A" prompt w1 say hi 2>&1) && [[ $out == *"started task-"* ]] && ok "prompt with pi's llm grant starts the task" || bad "prompt with the grant: $out"
+# The log hint works as printed: run starts in ~/project. (tmux is a stub here, so write the log ourselves.)
+log=$(sed -n 's/.*log: boxery run w1 cat \(\.boxery\/task-[0-9-]*\.log\)$/\1/p' <<<"$out")
+[[ -n $log ]] && echo "task log" >"$tmp/vms/w1/home/project/$log"
+[[ -n $log && $("$A" run w1 cat "$log" 2>&1) == "task log" ]] && ok "prompt's log hint names the log under ~/project" || bad "prompt log hint: $out"
 "$A" revoke w1 llm:chatgpt >/dev/null 2>&1
+# attach runs only its three tools, and says what to use instead when there is no terminal. With python3
+# (not in every test image), the cases run on a pseudo-terminal too, as a person's attach does.
+: >"$tmp/tmux.calls"; printf '#!/bin/sh\necho "$*" >>%q\n[ "$1" != has-session ]\n' "$tmp/tmux.calls" >"$tmp/bin/tmux"
+onpty() { if command -v python3 >/dev/null; then python3 -c 'import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))' "$@" </dev/null; else "$@" </dev/null; fi; }
+rc=0; out=$(onpty "$A" attach w1 "bogus'; touch $tmp/pwned-attach; '" 2>&1) || rc=$?
+[[ $rc == 2 && $out == *"unknown agent: bogus"*"(pi, opencode or shell)"* && ! -e $tmp/pwned-attach && ! -s $tmp/tmux.calls ]] && ok "attach refuses an unknown tool (exit 2), running nothing" || bad "attach bogus ($rc): $out"
+rc=0; out=$("$A" attach w1 shell 2>&1 </dev/null) || rc=$?
+[[ $rc == 1 && $out == *"attach needs a terminal"*"boxery prompt w1"*"boxery run --bg w1"* && ! -s $tmp/tmux.calls ]] && ok "attach without a terminal points at prompt and run --bg" || bad "attach without a terminal ($rc): $out"
+if command -v python3 >/dev/null; then
+	rc=0; out=$(onpty "$A" attach w1 shell 2>&1) || rc=$?
+	[[ $rc == 0 ]] && grep -q "^new-session -d -s shell -c .* bash -lc 'bash -l; exec bash -l'$" "$tmp/tmux.calls" && grep -qx "attach -t shell" "$tmp/tmux.calls" && ok "attach on a terminal: shell runs bash -l in its tmux session" || bad "attach shell ($rc): $out / $(cat "$tmp/tmux.calls")"
+fi
 rm -f "$tmp/bin/tmux"
 # A VM that doesn't exist (#210): ssh exits 255, and ControlPersist would hide the host's reason, so the
 # controller says it. A command's own exit 255 is not taken for that.
@@ -137,13 +163,28 @@ for c in "run nosuch true" "ssh nosuch true" "jobs nosuch" "sessions nosuch" "lo
 done
 rc=0; out=$("$A" run w1 bash -c 'exit 255' 2>&1) || rc=$?
 [[ $rc == 255 && $out != *boxery:* ]] && ok "run: the command's own exit 255 says nothing more" || bad "run exit 255: rc=$rc $out"
+# desktop, cp and grants say so too (#216); cp leaves nothing to clean up, since nothing could be staged.
+echo data >"$tmp/cpfile"
+for c in "desktop nosuch --no-open" "cp nosuch:x $tmp/cpdest" "cp $tmp/cpfile nosuch:x" "grants nosuch" "grants nosuch --json"; do
+	rc=0; out=$(eval "\"\$A\" $c" 2>&1 </dev/null) || rc=$?
+	[[ $rc == 1 && $out == "boxery: no such vm: nosuch on host local (boxery ls lists them)" ]] && ok "${c%% /*}…: no such vm, exit 1, and only that" || bad "$c: rc=$rc $out"
+done
+left=''; for f in "$tmp"/.boxery-copy*; do [[ -e $f ]] && left=$f; done
+[[ ! -e $tmp/cpdest && -z $left ]] && ok "cp from a missing VM creates nothing here" || bad "cp left: $tmp/cpdest $left"
 [ "$("$A" leases --json)" = '[]' ] && ok "leases --json with none → []" || bad "leases --json empty"
-[ "$("$A" grants nogrants --json)" = '[]' ] && ok "grants --json with none → []" || bad "grants --json empty"
 "$A" snap w1 s1 >/dev/null 2>&1; [ "$("$A" snaps w1 --json | jq -c 'map({name})')" = '[{"name":"s1"}]' ] && ok "snaps --json via controller" || bad "snaps --json: $("$A" snaps w1 --json 2>&1)"
+# Hints name the command the person typed: boxery-host only when it was called directly, --host when given
+hints() { { "$@" >/dev/null; } 2>&1 || true; }
+[[ $(hints "$A" snap w1 s1) == *"exists (boxery snap-rm w1 s1)"* ]] && ok "host hint through boxery" || bad "host hint: $(hints "$A" snap w1 s1)"
+[[ $(hints "$A" --host local snap w1 s1) == *"exists (boxery --host local snap-rm w1 s1)"* ]] && ok "host hint through boxery --host NAME" || bad "host hint --host: $(hints "$A" --host local snap w1 s1)"
+[[ $(hints "$HOSTBIN" snap w1 s1) == *"exists (boxery-host snap-rm w1 s1)"* ]] && ok "host hint from boxery-host itself" || bad "host hint direct: $(hints "$HOSTBIN" snap w1 s1)"
+[[ $(hints "$A" --host local run w1 echo "\$HOME/x") == *"to expand it in the VM: boxery --host local run w1 bash -c"* ]] && ok "run's note keeps --host" || bad "run note --host: $(hints "$A" --host local run w1 echo "\$HOME/x")"
+[[ $(hints "$A" run w1 echo "\$HOME/x") == *"to expand it in the VM: boxery run w1 bash -c"* ]] && ok "run's note without --host" || bad "run note: $(hints "$A" run w1 echo "\$HOME/x")"
 "$A" rm w1 >/dev/null 2>&1 && [[ ! -f $P/grants/w1 ]] && ! grep -q '^Host w1.boxery' "$P/ssh_config" && ok "rm clears grants + ForwardAgent" || bad "rm cleanup"
 
 # --- edge (http:) grants: secret goes to the host proxy's route file, never into the VM
 "$A" new e1 >/dev/null 2>&1
+[ "$("$A" grants e1 --json)" = '[]' ] && [ "$("$A" grants e1)" = 'no grants for e1' ] && ok "grants with none → [] / no grants" || bad "grants empty: $("$A" grants e1 --json 2>&1)"
 mkdir -p "$tmp/vms/e1/home/.boxery"; printf 'e1:tok123' >"$tmp/vms/e1/home/.boxery/token"
 export EDGE_SECRET='ghp_EDGESECRET42'
 "$A" grant e1 github --cmd 'printf %s "$EDGE_SECRET"' http:registry.npmjs.org --cmd 'echo npm_EDGE2' http:api.example.com --auth header:X-Api-Key --cmd 'echo k3y' --readonly >/dev/null 2>&1 && ok "grant http + github preset" || bad "grant http: $("$A" grant e1 github --cmd 'printf %s "$EDGE_SECRET"' 2>&1)"

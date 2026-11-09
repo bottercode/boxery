@@ -21,7 +21,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fail, validName } from "./util.mjs";
+import { fail, hint, validName } from "./util.mjs";
 import { hostUsage } from "./help.mjs";
 /** @import { Runtime } from "./runtime.mjs" */
 /** @import { GuestEndpoint } from "./guest.mjs" */
@@ -128,7 +128,7 @@ export async function ensureHostKey(rt, name, ep) {
 	}
 	if (platform && hasHostKey(rt.conf, name)) return null; // the API was briefly unavailable: keep the last one
 	return `no pinned ssh host key for ${name} (a VM made before boxery pinned keys, or its record was lost); ` +
-		`if you trust the network path to it, run: boxery pin ${name} --from-guest`;
+		`if you trust the network path to it, run: ${hint(`pin ${name} --from-guest`)}`;
 }
 
 /** `boxery-host known-hosts NAME`: NAME's known_hosts line on stdout (a controller's KnownHostsCommand).
@@ -156,7 +156,7 @@ export async function pin(rt, args) {
 	if (!t) {
 		if (!args.includes("--from-guest")) {
 			fail(`cannot read ${name}'s host key through the ${rt.backend} hypervisor (no guest agent?); ` +
-				`if you trust the network path to ${ep.host}:${ep.port}, run: boxery pin ${name} --from-guest`);
+				`if you trust the network path to ${ep.host}:${ep.port}, run: ${hint(`pin ${name} --from-guest`)}`);
 		}
 		const k = scanKey(ep);
 		if (!k) fail(`no ed25519 ssh host key from ${ep.host}:${ep.port}`);

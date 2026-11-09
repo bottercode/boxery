@@ -1,0 +1,120 @@
+boxery — remote desktop VMs for coding agents
+
+Usage:
+  boxery [--host NAME] COMMAND [ARGS...]
+
+Getting started:
+  setup user@host|local                 Configure a VM host (local = this machine), register your ssh key
+  help [--all | COMMAND]                Show help for boxery, a command or a family action
+
+VMs:
+  ls                                    List VMs: every host's, a section each (--host NAME: one)
+  new NAME                              Create a VM
+  start NAME                            Start a stopped VM (pins its ssh host key where it can)
+  stop NAME                             Stop a VM
+  rm NAME                               Destroy a VM and its snapshots (revokes its LLM token)
+  resize NAME                           Change a VM's size (restarts it if running; disk only grows)
+  fork SRC DST...                       Copy a VM (running or not) into new VMs, ~10 s
+  patch NAME|--all                      Update a VM's guest software to the host's image layers
+
+Work in a VM:
+  ssh NAME[@HOST] [CMD...]              Shell into a VM (also: ssh NAME.boxery)
+  run NAME CMD [ARG...]                 Run a command in ~/project, args as given (like docker exec)
+  cp FROM TO                            Copy files and directories to, from and between VMs
+  desktop NAME                          Open a VM's desktop in your browser (noVNC over ssh)
+  forward NAME PORT [LOCAL]             Forward a VM port to localhost
+  attach NAME [AGENT]                   Attach to an agent in a persistent tmux session (= agent attach)
+  prompt NAME "TASK"                    Start a headless pi task in its own tmux session (= agent prompt)
+
+Command families (boxery FAMILY --help):
+  host add|ls|show|use|rm|…             Named hosts, and maintenance of the selected host
+  snapshot create|ls|restore|rm|images  Saved VM disk states: create, restore, list, delete
+  agent attach|prompt|ls                Persistent coding-agent sessions in a VM
+  job ls|logs|wait|kill                 Background jobs in a VM (run --bg starts one)
+  access grant|revoke|ls|apply          What a VM may use from this machine (grants)
+  lease acquire|renew|release|ls        Borrow a VM from the shared pool
+  pool add|rm|ls                        Manage the shared pool of leasable VMs (admin)
+  runners once|status|...               GitHub Actions runners on pool VMs
+
+boxery host — named hosts, and maintenance of the selected host:
+  host add NAME DEST                    Register DEST (user@host or local) as NAME
+  host ls                               List hosts: where each runs and its backend
+  host show NAME                        Print a host's profile directory
+  host use NAME                         Make NAME the default host
+  host rm NAME                          Forget a host (its VMs and profile data stay)
+  host build-base                       Build the host's desktop base image (one time, ~3 min)
+  host upgrade                          Update boxery on the host and restart its services
+  host proxy-log [N]                    Recent LLM and edge (http: grant) requests on the host
+  host backend                          The host's VM backend (recorded for host ls)
+  host backends                         Backend support, requirements and capabilities
+  host capabilities                     The selected host's platform and capabilities
+
+boxery snapshot — saved VM disk states: create, restore, list, delete:
+  snapshot create NAME [SNAP]           Snapshot a VM's disk (Lima restarts a running VM)
+  snapshot ls NAME                      List a VM's snapshots
+  snapshot restore NAME SNAP            Restore a VM to a snapshot (keeps its name, address and token)
+  snapshot rm NAME SNAP                 Delete a snapshot
+  snapshot images                       Every snapshot on the host (new NAME --from VM@SNAP uses one)
+
+boxery agent — persistent coding-agent sessions in a VM:
+  agent attach NAME [AGENT]             Attach to an agent in a persistent tmux session
+  agent prompt NAME "TASK"              Start a headless pi task in its own tmux session
+  agent ls NAME                         List a VM's tmux sessions
+
+boxery job — background jobs in a VM (run --bg starts one):
+  job ls NAME                           List background jobs (run --bg starts one)
+  job logs NAME JOB                     Show a job's output (the last 200 lines)
+  job wait NAME JOB                     Wait for a job; exits with its exit code
+  job kill NAME JOB                     Stop a job: SIGTERM its process group, then SIGKILL
+
+boxery access — what a VM may use from this machine (grants):
+  access grant NAME SPEC...             Give a VM access to something on this machine (asks first)
+  access revoke NAME SPEC...|all        Take access away (pushed values are deleted from the VM)
+  access ls NAME                        Show a VM's grant kinds and settings (read-only)
+  access apply NAME                     Push a VM's grants to it again
+
+boxery lease — borrow a VM from the shared pool:
+  lease acquire                         Lease a VM from the shared pool (prints NAME LEASE_ID)
+  lease renew NAME                      Extend your lease
+  lease release NAME                    Give a leased VM back (it is reset to its clean snapshot)
+  lease ls                              Your leases
+
+More:
+  pin NAME                              Re-pin a VM's ssh host key (VMs made before keys were pinned)
+  shapes                                VM sizes defined on the host (* = default)
+  version                               Controller and host versions; warns when the host is behind
+
+Older spellings (still work; the same commands as the family actions):
+  build-base                            Build the host's desktop base image (one time, ~3 min) (= host build-base)
+  snap NAME [SNAP]                      Snapshot a VM's disk (Lima restarts a running VM) (= snapshot create)
+  snaps NAME                            List a VM's snapshots (= snapshot ls)
+  revert NAME SNAP                      Restore a VM to a snapshot (keeps its name, address and token) (= snapshot restore)
+  snap-rm NAME SNAP                     Delete a snapshot (= snapshot rm)
+  images                                Every snapshot on the host (new NAME --from VM@SNAP uses one) (= snapshot images)
+  sessions NAME                         List a VM's tmux sessions (= agent ls)
+  jobs NAME                             List background jobs (run --bg starts one) (= job ls)
+  logs NAME JOB                         Show a job's output (the last 200 lines) (= job logs)
+  wait NAME JOB                         Wait for a job; exits with its exit code (= job wait)
+  kill NAME JOB                         Stop a job: SIGTERM its process group, then SIGKILL (= job kill)
+  grant NAME SPEC...                    Give a VM access to something on this machine (asks first) (= access grant)
+  revoke NAME SPEC...|all               Take access away (pushed values are deleted from the VM) (= access revoke)
+  grants NAME [apply]                   Show a VM's grants, or push them again (apply) (= access ls | access apply)
+  agent-forward NAME on|off             Same as access grant|revoke NAME ssh-agent
+  acquire                               Lease a VM from the shared pool (prints NAME LEASE_ID) (= lease acquire)
+  renew NAME                            Extend your lease (= lease renew)
+  release NAME                          Give a leased VM back (it is reset to its clean snapshot) (= lease release)
+  leases                                Your leases (= lease ls)
+  upgrade-host                          Update boxery on the host and restart its services (= host upgrade)
+  backends                              Backend support, requirements and capabilities (= host backends)
+  capabilities                          The selected host's platform and capabilities (= host capabilities)
+  backend                               The host's VM backend (recorded for host ls) (= host backend)
+  proxy-log [N]                         Recent LLM and edge (http: grant) requests on the host (= host proxy-log)
+
+Options:
+  --host NAME                           Run COMMAND on a host other than the default (boxery host use)
+  --json                                JSON output on listings (fields: docs/cli.md#json-output)
+  -h, --help                            Show help; boxery COMMAND --help shows a command's
+  help --all                            Every command, every family action and every older spelling
+
+Docs: https://github.com/modem-dev/boxery/blob/master/docs/cli.md
+Agents: prefer the vm_* tools (boxery-mcp or the pi extension): https://github.com/modem-dev/boxery/blob/master/docs/mcp.md

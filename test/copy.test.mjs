@@ -453,6 +453,25 @@ test("copying into the source tree excludes private staging rather than recursin
 	noStages();
 });
 
+test("a VM endpoint that can't be reached says why; only a VM the host doesn't have drops its staging (#216)", async () => {
+	writeFileSync(path.join(project(), "source"), "data");
+	const run = (unreachable) => worker("alpha/vm:source", "alpha/ghost:x", {}, { metadataTimeoutMs: 10_000, unreachable }).result;
+	// No such VM: just that. The source VM's staging is still cleaned up.
+	let result = await run({ message: "no such vm: ghost", known: true, missing: true });
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "no such vm: ghost");
+	noStages();
+	// Stopped (maybe mid-prepare): the reason first, and the usual caution about staging it can't clean.
+	result = await run({ message: "VM ghost is stopped", known: true });
+	assert.match(result.error, /^VM ghost is stopped \(prepare alpha\/ghost: exit 255\)/);
+	assert.match(result.error, /late staging may remain/);
+	// Nothing known: what ssh said is added to the failure.
+	result = await run({ message: "VM \"ghost\" unreachable over ssh: refused", known: false });
+	assert.match(result.error, /^prepare alpha\/ghost: exit 255 \(VM "ghost" unreachable over ssh: refused\)/);
+	assert.match(result.error, /late staging may remain/);
+	noStages();
+});
+
 test("unreachable cleanup is reported rather than silently claiming a clean transfer", async () => {
 	writeFileSync(path.join(dir, "source"), "data");
 	const result = await worker(`local:${path.join(dir, "source")}`, "beta/vm:destination", { COPY_FAIL_CLEANUP: "beta/vm" }).result;

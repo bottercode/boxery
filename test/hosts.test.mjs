@@ -314,6 +314,15 @@ test("an unreachable VM says why (#210): no such VM, stopped, a pool VM this mac
 		assert.match(text(r), why);
 	}
 	rmSync(path.join(profile("alpha"), "leases"), { recursive: true, force: true });
+	// vm_copy and vm_info grants too (#216): just "no such vm", with no staging to report.
+	const none = /^no such vm: ghost on host alpha \(boxery ls lists them\)$/;
+	writeFileSync(path.join(dir, "ghost-src"), "x\n");
+	for (const r of [await c.tool("vm_copy", { from: "ghost:x", to: `local:${path.join(dir, "ghost-copy")}` }), await c.tool("vm_copy", { from: `local:${path.join(dir, "ghost-src")}`, to: "ghost:x" }),
+		await c.tool("vm_info", { action: "grants", vm: "ghost" })]) {
+		assert.equal(r.isError, true);
+		assert.match(text(r), none);
+	}
+	assert.equal(existsSync(path.join(dir, "ghost-copy")), false);
 	// A command's own 255 is its exit code: a fresh connection works, so the VM isn't unreachable.
 	assert.match(text(await c.tool("vm_bash", { vm: "fakevm", command: "exit 255" })), /\[exit 255\]$/);
 });
@@ -417,7 +426,7 @@ test("vm_info hosts says where each host runs, its recorded backend, and which n
 		assert.equal(lines[3], `root\tlocal\tlima\tsame host as root2\t${home}`);
 		const info = (await c.call("tools/list")).result.tools.find((t) => t.name === "vm_info");
 		assert.deepEqual(Object.keys(info.outputSchema.properties.hosts.items.properties).sort(), Object.keys(byName.alpha).sort());
-		assert.match(info.inputSchema.properties.host.description, /same profile directory.*same host/);
+		assert.match(info.inputSchema.properties.host.description, /same host-side profile.*same host/);
 	} finally {
 		for (const h of ["alpha", "beta"]) {
 			writeFileSync(path.join(profile(h), "config"), "# fake controller config\n");

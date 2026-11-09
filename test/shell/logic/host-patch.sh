@@ -21,7 +21,10 @@ for d in "$tmp/vms"/*/; do
 	[ "\$(cat "\$d/port" 2>/dev/null)" = "\$port" ] || continue
 	[ "\$(cat "\$d/state")" = running ] || exit 255
 	R=\${d}root; mkdir -p "\$d/home" "\$R/etc/boxery" "\$R/var/run" "\$R/var/log" "\$R/run/user"
-	[ -s "\$R/boot_id" ] || echo boot-0 >"\$R/boot_id"
+	# First contact is first boot: with $tmp/first-boot-reboot its package updates ask for a reboot; with
+	# $tmp/first-boot-build-info it has that build-info (a desktop base's).
+	[ -s "\$R/boot_id" ] || { echo boot-0 >"\$R/boot_id"; [ ! -e "$tmp/first-boot-reboot" ] || touch "\$R/var/run/reboot-required"
+		[ ! -e "$tmp/first-boot-build-info" ] || cp "$tmp/first-boot-build-info" "\$R/etc/boxery/build-info"; }
 	paths() { sed -e "s#/etc/boxery#\$R/etc/boxery#g" -e "s#/usr/local/lib/boxery#\$R/usr/local/lib/boxery#g" -e "s#/usr/local/sbin#\$R/usr/local/sbin#g" \\
 		-e "s#/var/log#\$R/var/log#g" -e "s#/var/run#\$R/var/run#g" -e "s#/run/user#\$R/run/user#g" -e "s#/proc/sys/kernel/random/boot_id#\$R/boot_id#g"; }
 	cmd=\$(printf '%s' "\${*:-true}" | sed "s#/usr/local/sbin/boxery-provision#$tmp/guest-bin/fake-provision#g" | paths)
@@ -106,7 +109,10 @@ sed -i.bak 's/^layers_hash=.*/layers_hash=0000/' "$(r d1)/etc/boxery/build-info"
 [[ $(status d1) == "current " ]] && ok "ls reads the host's record, not the guest" || bad "d1: $(status d1)"
 "$H" ls --refresh >/dev/null 2>"$tmp/err"
 [[ $(status d1) == "outdated layers changed" ]] && ok "built with other layers → outdated (layers changed)" || bad "d1: $(status d1)"
-grep -q 'outdated guest software: d1 (layers changed). Update with: boxery patch NAME|--all' "$tmp/err" && ok "ls says how to update it" || bad "hint: $(cat "$tmp/err")"
+grep -q 'outdated guest software: d1 (layers changed). Update with: boxery-host patch NAME|--all' "$tmp/err" && ok "ls says how to update it" || bad "hint: $(cat "$tmp/err")"
+# Called through the controller (BOXERY_CLI says how), the hint names what the person typed; anything else isn't trusted.
+BOXERY_CLI="boxery --host lab" "$H" ls 2>&1 >/dev/null | grep -q 'Update with: boxery --host lab patch NAME|--all' && ok "through boxery --host lab: the hint names it" || bad "hint via the controller: $(BOXERY_CLI="boxery --host lab" "$H" ls 2>&1 >/dev/null)"
+BOXERY_CLI='rm -rf / #' "$H" ls 2>&1 >/dev/null | grep -q 'Update with: boxery-host patch' && ok "an unexpected BOXERY_CLI is ignored" || bad "odd BOXERY_CLI: $(BOXERY_CLI='rm -rf / #' "$H" ls 2>&1 >/dev/null)"
 "$H" ls 2>/dev/null | grep -q '^d1 .* outdated$' && ok "ls: GUEST outdated" || bad "ls: $("$H" ls 2>&1)"
 "$H" snap d1 old >/dev/null 2>&1
 mv "$(r d1)/etc/boxery/build-info.bak" "$(r d1)/etc/boxery/build-info"
@@ -127,8 +133,30 @@ echo "== snapshots and images"
 "$H" patch d1 >/dev/null 2>"$tmp/err"
 grep -q "d1's snapshots were not patched (old): a VM made or reverted from one has its old software until you patch it" "$tmp/err" && ok "patch says the snapshots weren't patched" || bad "no snapshot note: $(cat "$tmp/err")"
 "$H" snaps d1 | grep -q $'^old\t.*outdated$' && ok "...and they stay outdated" || bad "snaps: $("$H" snaps d1)"
-"$H" new d2 --from d1@old >/dev/null 2>&1; [[ $(status d2) == "outdated layers changed" ]] && ok "a VM from an outdated image is outdated" || bad "d2: $(status d2)"
+"$H" new d2 --from d1@old >/dev/null 2>"$tmp/err"; [[ $(status d2) == "outdated layers changed" ]] && ok "a VM from an outdated image is outdated" || bad "d2: $(status d2)"
+grep -qx "==> warning: d2 is an outdated guest (layers changed), as d1@old is; update it with: boxery patch d2" "$tmp/err" && ok "...and new says so (#215)" || bad "new warning: $(cat "$tmp/err")"
 "$H" revert d1 old >/dev/null 2>&1; [[ $(status d1) == "outdated layers changed" ]] && ok "so is a VM reverted to one" || bad "reverted d1: $(status d1)"
+"$H" fork d1 f1 f2 >/dev/null 2>"$tmp/err"
+[[ $(grep -c 'outdated guest' "$tmp/err") == 1 ]] && grep -qx "==> warning: d1 is an outdated guest (layers changed), and so are its forks; update them with: boxery patch NAME (patch d1 first to fork current copies)" "$tmp/err" &&
+	ok "fork of an outdated VM: one warning, naming the source" || bad "fork warning: $(cat "$tmp/err")"
+"$H" rm f1 >/dev/null 2>&1; "$H" rm f2 >/dev/null 2>&1
+# A desktop base built with other layers than the host's: every new desktop VM has its build-info.
+sed 's/^layers_hash=.*/layers_hash=0000/' "$(r h1)/etc/boxery/build-info" >"$tmp/first-boot-build-info"
+"$H" new d3 >/dev/null 2>"$tmp/err"
+grep -qx "==> warning: d3 is an outdated guest (layers changed), as the desktop base is; update it with: boxery patch d3; to make new desktop VMs current, rebuild the base (boxery build-base) once no VM depends on it" "$tmp/err" &&
+	ok "new from an outdated desktop base: says so, with a fix that works now (#215)" || bad "base warning: $(cat "$tmp/err")"
+cp "$(r h1)/etc/boxery/build-info" "$tmp/first-boot-build-info"
+"$H" new d4 >/dev/null 2>"$tmp/err"; rm "$tmp/first-boot-build-info"
+! grep -q warning "$tmp/err" && [[ $(status d4) == "current " ]] && ok "...a current one: no warning" || bad "d4: $(status d4) $(cat "$tmp/err")"
+"$H" rm d3 >/dev/null 2>&1; "$H" rm d4 >/dev/null 2>&1
+# The stock image's first-boot updates want a reboot: new --headless restarts it, so it starts current.
+touch "$tmp/first-boot-reboot"
+"$H" new h2 --headless >/dev/null 2>"$tmp/err"; rm "$tmp/first-boot-reboot"
+grep -qx "==> h2: restarting it (the updates ask for it: /var/run/reboot-required)" "$tmp/err" && [[ $(cat "$(r h2)/reboots") == x && $(status h2) != *reboot* ]] &&
+	ok "new --headless reboots once when first boot asks for it (#215)" || bad "first-boot reboot: $(status h2) $(cat "$tmp/err")"
+"$H" new h3 --headless >/dev/null 2>"$tmp/err"
+! grep -q restarting "$tmp/err" && [[ ! -e $(r h3)/reboots ]] && ok "...and only then" || bad "h3 rebooted: $(cat "$tmp/err")"
+"$H" rm h2 >/dev/null 2>&1; "$H" rm h3 >/dev/null 2>&1
 "$H" rm d2 >/dev/null 2>&1; [[ ! -e $BOXERY_CONF/build-info/d2 ]] && ok "rm forgets the record" || bad "d2 record left"
 
 echo "== restarts"
@@ -165,7 +193,7 @@ grep -q 'captured its clean image p1@boxery-clean again' "$tmp/err" && ok "...an
 out=$(echo "$K1" | "$H" acquire --holder alice --ttl 600 2>/dev/null); lease=$(awk '{print $2}' <<<"$out")
 [[ $lease == l-* ]] && ok "lease p1" || bad "acquire: $out"
 if "$H" patch p1 >/dev/null 2>"$tmp/err"; then bad "patched a leased VM"; else
-	grep -q 'p1 is a pool VM with an active lease (leased); patch it after the lease ends (or: patch p1 --wait S)' "$tmp/err" && ok "a leased pool VM is refused" || bad "err: $(cat "$tmp/err")"; fi
+	grep -q 'p1 is a pool VM with an active lease (leased); patch it after the lease ends (or: boxery-host patch p1 --wait S)' "$tmp/err" && ok "a leased pool VM is refused" || bad "err: $(cat "$tmp/err")"; fi
 if "$H" patch p1 --wait 1 >/dev/null 2>"$tmp/err"; then bad "--wait patched a leased VM"; else
 	grep -q 'p1 is leased; waiting up to 1s' "$tmp/err" && grep -q 'active lease' "$tmp/err" && ok "--wait S: refused once S runs out" || bad "err: $(cat "$tmp/err")"; fi
 echo leftover >"$(r p1)/lease-work"

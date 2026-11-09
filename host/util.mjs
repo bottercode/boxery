@@ -11,6 +11,10 @@ export const shellQuote = (/** @type {unknown} */ s) => `'${String(s).replace(/'
 /** Fail the command: "boxery-host: MESSAGE" on stderr, exit status EXITCODE.
  *  @type {(message: string, exitCode?: number) => never} */
 export const fail = (message, exitCode = 1) => { throw Object.assign(new Error(message), { exitCode }); };
+/** A command for a hint, when the controller has it too (snap-rm, pool rm, images, …): as the person would
+ *  type it. The controller says how it was run in BOXERY_CLI (`boxery` or `boxery --host NAME`:
+ *  controller/lib.mjs invokedAs); called directly, it is boxery-host. @param {string} command e.g. "images" */
+export const hint = (command) => `${/^boxery(?: --host [a-z][a-z0-9-]{0,30})?$/.exec(process.env.BOXERY_CLI ?? "")?.[0] ?? "boxery-host"} ${command}`;
 /** @param {string | undefined} n @returns {string} */
 export const validName = (n) => (VALID_NAME.test(n ?? "") ? /** @type {string} */ (n) : fail(`invalid name '${n ?? ""}' (use [a-z][a-z0-9-]*)`));
 /** @param {string | undefined} s @returns {string} */

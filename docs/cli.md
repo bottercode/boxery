@@ -8,9 +8,34 @@
 
 ## `boxery` (your laptop)
 
-`boxery help` lists every command; `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, and works before `setup`.
+`boxery help` lists the everyday commands and the command families; `boxery help --all` lists every command, every family action and every older spelling. `boxery COMMAND --help` (or `boxery help COMMAND`) shows one command's options and examples, `boxery FAMILY --help` a family's actions, and `boxery FAMILY ACTION --help` (or `boxery help FAMILY ACTION`) an action's options. Help works before `setup` and never contacts a host. `boxery --version` (or `-V`) is `boxery version`.
 
+Exit status: `0` on success; a command that runs something in the VM (`run`, `ssh`, `attach`, `wait` and the like) exits with its status, so a script can't tell boxery's codes from the command's. boxery's own failures exit `1`, and its usage errors (an unknown command or flag, a missing argument or flag value, arguments that don't fit the command's usage) exit `2`. A value that is refused (an invalid name, a VM that doesn't exist) is a failure, `1`, and so is a usage error that the host reports for a command boxery passes to it (`images`, `pool`, `runners`, …).
+
+- [Command families](#command-families)
 - [All commands](#all-commands), generated from the same help
+
+### Command families
+
+The everyday commands stay top level: `new`, `ls`, `start`, `stop`, `rm`, `resize`, `fork`, `patch`, `ssh`, `run`, `cp`, `desktop`, `forward`, `setup`, and the two shortcuts `attach` and `prompt`. Everything else is grouped by what it is for:
+
+| Family | For | Actions (older spelling) |
+|---|---|---|
+| `host` | named hosts, and maintenance of the selected host | `add`, `ls`, `show`, `use`, `rm` (the host registry); `build-base`, `upgrade` (`upgrade-host`), `proxy-log`, `backend`, `backends`, `capabilities` |
+| `snapshot` | saved VM disk states | `create` (`snap`), `ls` (`snaps`), `restore` (`revert`), `rm` (`snap-rm`), `images` |
+| `agent` | persistent coding-agent sessions | `attach`, `prompt` (both also top level), `ls` (`sessions`) |
+| `job` | background processes | `ls` (`jobs`), `logs`, `wait`, `kill`; a job is started with `run --bg` |
+| `access` | what a VM may use from this machine | `grant`, `revoke`, `ls` (`grants NAME`), `apply` (`grants NAME apply`); `agent-forward NAME on\|off` is `grant\|revoke NAME ssh-agent` |
+| `lease` | borrowing a pool VM | `acquire`, `renew`, `release`, `ls` (`leases`) |
+| `pool` | adding and removing leasable VMs (admin) | `add`, `rm`, `ls` |
+| `runners` | GitHub Actions runners | `once`, `status`, … |
+
+- **The same commands.** A family action runs its older spelling's code: same arguments and flags, output, `--json` fields, exit statuses and signals, and the same host selection. Older spellings keep working, without a warning, so scripts need no change. Only usage errors differ: they show the spelling you typed.
+- **`host` has two kinds of action.** `add`, `ls`, `show`, `use` and `rm` manage this machine's registry of hosts and refuse `--host`. `add NAME DEST` runs setup on its explicit destination; importing `--config-dir` and the other registry actions stay local. Maintenance actions (`build-base`, `upgrade`, `proxy-log`, `backend`, `backends`, `capabilities`) use the selected host, the default or `--host NAME`: `boxery --host lab host upgrade --check`.
+- **`access ls` only lists.** It takes `NAME [--json]` and nothing else, so `access ls demo apply` is a usage error, not a push. Pushing the grants again is `access apply`. Grant approval is unchanged ([Grants](#grants)).
+- **`snapshot images`** lists the snapshots `new NAME --from VM@SNAP` can start from; it is not another kind of saved state. `fork` copies a VM's current disk; `snapshot create` saves one to come back to.
+- **Mistakes.** An unknown action names the family's actions (`unknown snapshot action: restroe (did you mean restore?); actions: …`) and exits 2, before any host, profile or grant is read.
+- **Payload words are not options.** `boxery run` and `boxery ssh` hand every word after the VM name to the VM, `--help` included. Family actions recognise help only immediately after the action (`job logs --help`), so `agent prompt demo --help` sends `--help` as task text. Older top-level spellings retain their help conventions, including `snap demo --help` and `prompt demo --help`.
 
 ### Named hosts
 
@@ -24,17 +49,18 @@ boxery host ls [--json]                     # where each runs (local / ssh desti
 boxery host show hornet
 boxery host use laptop
 boxery --host hornet ls
-boxery --host hornet acquire                # pool lease on that host
+boxery --host hornet lease acquire          # pool lease on that host
+boxery --host hornet host upgrade --check   # maintenance acts on the selected host
 boxery host rm hornet                       # forget only; preserves VMs and profile data
 ```
 
-Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names registered for the same profile are listed once. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
+Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names for the same host (`same_as` in `host ls --json`) are listed once, headed `(also NAME)`, with each name's grants. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
 
 ### Backend discovery
 
-`boxery backends [--json]` lists backend platform support, requirements and capabilities.
-`boxery capabilities [--json | --check]` assesses the selected **host**, not the controller.
-Both are also available directly as `boxery-host` commands. Agents use
+`boxery host backends [--json]` lists backend platform support, requirements and capabilities.
+`boxery host capabilities [--json | --check]` assesses the selected **host**, not the controller.
+Both are also available as the top-level `backends` and `capabilities`, and directly as `boxery-host` commands. Agents use
 `vm_info {action:"capabilities"}`. See the [metadata contract](backends.md) for
 supported versus tested configurations and conditional features. Setup checks
 locally verifiable requirements before backend initialization; manual account and
@@ -46,7 +72,7 @@ privilege requirements are explained but remain unknown until verified.
 boxery setup you@my-host                     # or: setup local   [--name NAME] [--key ~/.ssh/id_ed25519.pub]
 boxery new demo                              # ~13 s   [--shape large] [--cpus N --mem MiB --disk GiB] [--grant SPEC]…
 boxery new ci-1 --headless                   # no desktop, no build-base needed: ~50 s on Lima (see below)
-boxery build-base                            # the host's desktop base image (one time, ~3 min)
+boxery host build-base                       # the host's desktop base image (one time, ~3 min); older spelling: build-base
 boxery shapes [--json]                       # VM sizes the host offers (* = default); see Shapes
 boxery ls [--json] [--refresh] [--running]   # VMs on every host, grouped; STATUS: lease, outdated guest, grants
 boxery patch demo | --all [--wait S]         # update a VM's guest software to the host's image layers
@@ -60,7 +86,7 @@ boxery pin demo [--from-guest]               # re-pin demo's ssh host key (a VM 
 
 **Host keys.** Every ssh to a VM checks its host key, which is pinned on the host when the VM is made ([security](security.md#vm-host-keys)). A VM made before that, or whose record was lost, fails with "Host key verification failed" until you run `boxery pin NAME`. That reads the key through the hypervisor (libvirt's guest agent) or the host's loopback endpoint (Lima, exe, boat). `--from-guest` instead trusts what the VM's ssh endpoint answers, once. `boxery start NAME` pins it automatically where it can.
 
-**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows `outdated guest (REASONS)` in its STATUS column when it is (`guest` in `--json`, with `status` `outdated`, `current` or `unknown`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. After the table, `ls` names the outdated VMs again on stderr with how to update them, and the running VMs not checked yet.
+**Outdated guest software.** A VM keeps the kernel and packages it was built with: nothing updates them after it is made. Every VM records what it was built with in `/etc/boxery/build-info` (date, kernel, a hash of boxery's image layers, and on desktops the Chrome/Chromium and `playwright-core` versions), and the host keeps a copy, read whenever it reaches the VM anyway (`new`, `fork`, `start`, `revert`, `patch`). `ls` shows `outdated guest (REASONS)` in its STATUS column when it is (`guest` in `--json`, with `status` `outdated`, `current` or `unknown`): `outdated` when the VM was built from other image layers than the host's current ones (the host was upgraded since), more than 30 days ago (`BOXERY_STALE_DAYS` in the host's `host.env` changes that), or when the guest asks for a reboot (`/var/run/reboot-required`, read when the host last reached it); `current` otherwise; `unknown` for a VM built before build records or never read. `ls` reads only the host's copy, so it stays fast; `ls --refresh` first reads each running VM's record over ssh. After the table, `ls` names the outdated VMs again on stderr with how to update them, and the running VMs not checked yet. `new` warns when a VM is outdated from the start because what it was made from is: an outdated desktop base or snapshot (`fork`: its source, once). `boxery patch NAME` updates the VM; to make new desktop VMs current, rebuild the base (`boxery build-base`, once no VM depends on it). A headless VM whose first-boot package updates ask for a reboot (a new kernel) is restarted once by `new`, so it starts current.
 
 `boxery patch NAME` updates a running VM in place: it copies the host's current image layers into the VM, runs the layers the VM has again (security updates and kernel with `apt-get full-upgrade`, and what the layers install outside apt: `playwright-core` and, on arm64, its Chromium; the pi and opencode CLIs; node 24), and restarts the VM if the updates ask to (its tmux sessions end; its grants are pushed again). It takes a few minutes, streams the layers' progress and logs everything to `/var/log/boxery-patch.log` in the VM. `--all` patches every running VM in turn, and says which it skipped (stopped VMs, pool VMs with a lease). A pool VM must be free: `patch` refuses one with a lease, or waits up to `--wait S` seconds for it to end; while it is patched no lease can start on it, and its clean image (`NAME@boxery-clean`) is captured again, so later leases start patched. **Snapshots and images are not patched**: `snaps` and `images` show their age and the guest software they hold, and a VM made or reverted from an outdated one is outdated until you patch it. A VM from a desktop base built before build records shows `unknown`; patching gives it a record. To patch the base itself, rebuild it (`boxery build-base`).
 
@@ -70,17 +96,19 @@ boxery pin demo [--from-guest]               # re-pin demo's ssh host key (a VM 
 
 ```bash
 boxery fork demo try-a try-b                 # copy demo (running or not) into 2 new VMs, ~15–25 s   [--grants] [--shape S]
-boxery snap demo before-refactor             # ~1 s and live on libvirt; Lima restarts a running VM (~10 s)
-boxery snaps demo [--json]
-boxery revert demo before-refactor           # VM keeps its name, address and token
+boxery snapshot create demo before-refactor  # ~1 s and live on libvirt; Lima restarts a running VM (~10 s)
+boxery snapshot ls demo [--json]
+boxery snapshot restore demo before-refactor # VM keeps its name, address and token
 boxery new demo2 --from demo@before-refactor # a new VM from a snapshot
-boxery snap-rm demo before-refactor
-boxery images                                # every snapshot on the host (with AGE and GUEST, like snaps)
+boxery snapshot rm demo before-refactor
+boxery snapshot images [--json]              # every snapshot on the host (with AGE and GUEST, like ls)
 ```
+
+`snap`, `snaps`, `revert`, `snap-rm` and `images` are the older spellings of `snapshot create`, `ls`, `restore`, `rm` and `images`, and do the same.
 
 A **fork** is a separate VM with the source's disk (files, installed packages, git state) but not its running processes, and with its own hostname, LLM proxy token, ssh keys and network identity. Forks don't depend on the source: removing either one is fine. Forks get the source's size (cpus, memory, disk) unless you pass `--shape` or size flags. Grants are per VM and aren't copied unless you pass `--grants`. That option revalidates the source grants and asks for each destination before creating anything; stale files or newly forbidden legacy grants must be revoked first (or omit `--grants`). A fork of a leased pool VM is an ordinary VM and never accepts the lease key.
 
-Snapshots and forks are built on one backend primitive, the image (a copy of a VM's disk named `VM@LABEL`). They hold disk state only, never memory, so secrets pushed by grants (tmpfs) are never captured. `rm` removes a VM's snapshots too. Capturing a running VM (`snap`, `fork`, `pool add`, `patch` of a pool VM) depends on the backend: libvirt does it live in about a second, exe.dev in about 12 s with the VM kept running, but **Lima stops the VM and starts it again** (about 10 s), because Lima clones only stopped instances, so its processes, tmux sessions and background jobs end. `boxery capabilities` (or `boxery backends --json`) shows this in the `diskSnapshots` note. How each backend implements images: [backends](../host/backends/README.md#images-one-primitive-for-snapshots-forks-and-pool-resets).
+Snapshots and forks are built on one backend primitive, the image (a copy of a VM's disk named `VM@LABEL`). They hold disk state only, never memory, so secrets pushed by grants (tmpfs) are never captured. `rm` removes a VM's snapshots too. Capturing a running VM (`snap`, `fork`, `pool add`, `patch` of a pool VM) depends on the backend: libvirt does it live in about a second, exe.dev in about 12 s with the VM kept running, but **Lima stops the VM and starts it again** (about 10 s), because Lima clones only stopped instances, so its processes, tmux sessions and background jobs end. `boxery host capabilities` (or `boxery host backends --json`) shows this in the `diskSnapshots` note. How each backend implements images: [backends](../host/backends/README.md#images-one-primitive-for-snapshots-forks-and-pool-resets).
 
 ### Shell and in-VM agents
 
@@ -93,8 +121,10 @@ boxery run demo bash -c 'make test 2>&1 | tail'   # a shell line: bash -c
 boxery attach demo                           # pi in tmux. Ctrl-b d detaches; it keeps running.
 boxery attach demo opencode                  # or: shell
 boxery prompt demo "fix the failing tests and commit"   # headless pi task in its own tmux session
-boxery sessions demo [--json]                # list tmux sessions
+boxery agent ls demo [--json]                # list tmux sessions
 ```
+
+`attach` and `prompt` are everyday shortcuts for `agent attach` and `agent prompt` (same arguments, same behaviour). `agent ls` lists a VM's tmux sessions (older spelling: `sessions`).
 
 `run` works like `docker exec` / `kubectl exec`: the command gets exactly the arguments you pass, and nothing in them (quotes, `$`, `~`, globs, `;`) is re-parsed in the VM. For pipes, `&&`, `~` or `$VAR`, run a shell explicitly with `bash -c '…'` (how `run` used to treat every command). A whole command line passed as one argument (`boxery run demo 'make test'`) is looked up as a single command name and fails with a hint. An argument that is `~`, starts with `~/` or contains `$VAR`/`${…}` reaches the command literally and exits 0, so `run` adds a note on stderr pointing at `bash -c` (not when the command is a shell or an interpreter such as awk, perl or jq, whose code uses `$`). Like the `vm_bash` tool, `run` starts in `~/project` (home if there is none), and a relative `--cwd DIR` is under `~/project`; `~/` expands in the VM and absolute paths are used as is. `--` ends `run`'s own options. The exit code is the command's. `ssh NAME cmd…` keeps plain ssh semantics.
 
@@ -103,7 +133,7 @@ boxery sessions demo [--json]                # list tmux sessions
 `--host` is allowed; conflicting selectors are rejected before connecting. The
 shorthand does not change the default host and works even when none is selected.
 
-When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `sessions`, `jobs`, `logs`, `wait`, `kill` and `desktop` say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that run commands in a VM (`vm_bash`, `vm_jobs`, the file and desktop tools) report the same.
+When ssh can't connect (exit 255), `ssh`, `run`, `attach`, `prompt`, `agent ls`, `job ls`, `job logs`, `job wait`, `job kill` and `desktop` (and `cp`, which exits 1; see [Copying files](copy.md)) say why: `no such vm: NAME`, a VM that isn't running, or a pool VM this machine holds no lease on (or whose lease has expired); otherwise what ssh said. The exit code stays 255. (The generated `ssh_config` keeps connections open with `ControlPersist`, and OpenSSH then discards the host's own message, so boxery checks with one fresh connection and the host's VM list, only after a failure. A command that exits 255 itself, or ssh ended by Ctrl-C, gets no such message.) The agent tools that reach a VM (`vm_bash`, `vm_jobs`, `vm_copy`, the file and desktop tools) report the same. `access ls NAME` (also `grants NAME`) says `no such vm` too.
 
 ### Files
 
@@ -116,7 +146,7 @@ boxery --host hornet cp local:notes.md ci-1:~/notes.md
 
 `cp` is the `vm_copy` tool's own code, so it takes the same locations, `local:PATH`, `NAME:PATH` (a VM on the selected host) and `HOST/NAME:PATH`, and behaves the same way: streaming tar, staging, destination and cancellation rules are in [file transfers](copy.md). The one difference: the CLI has no current VM, so a bare path is on this machine, like `cp`/`scp` (`vm_copy` reads it as the current VM). A bare path that looks like a location with an invalid VM name (`Demo:x`) is refused instead of being written locally. Ctrl-C cancels and cleans up staging. `cp` runs on Node (≥ 20), which the npm package already needs.
 
-`prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`. pi needs the `llm:` grant for its provider (`llm:chatgpt` unless you changed pi's settings in the VM), and a new VM has none: `prompt` checks first and, if it's missing, starts nothing and prints the `boxery grant` command to run.
+`attach` starts pi, opencode or a shell (nothing else) and needs a terminal; without one it says to use `prompt` or `run --bg`, which work headless. `prompt` logs to `~/project/.boxery/task-*.log` in the VM. Attach to a task with `boxery attach demo pi task-…`. pi needs the `llm:` grant for its provider (`llm:chatgpt` unless you changed pi's settings in the VM), and a new VM has none: `prompt` checks first and, if it's missing, starts nothing and prints the `boxery grant` command to run (the older spelling of `boxery access grant`).
 
 ### Background command jobs
 
@@ -124,14 +154,14 @@ For commands that take a while (a test suite, a build). The job runs in the VM, 
 
 ```bash
 job=$(boxery run --bg demo --cwd app pnpm test)   # prints just the job ID
-boxery jobs demo [--json]                        # state, exit code, start time, command
-boxery logs demo "$job" [-f] [--strip-ansi] [--lines 200] [--bytes N]
-boxery wait demo "$job" [--timeout S] [--json]   # exits with the command's real status
-boxery kill demo "$job" [--grace S] [--json]     # SIGTERM its process group, SIGKILL after S s (default 5)
-boxery jobs demo --prune [--older-than 7d]       # delete finished jobs and their logs (default: all)
+boxery job ls demo [--json]                      # state, exit code, start time, command
+boxery job logs demo "$job" [-f] [--strip-ansi] [--lines 200] [--bytes N]
+boxery job wait demo "$job" [--timeout S] [--json]   # exits with the command's real status
+boxery job kill demo "$job" [--grace S] [--json]     # SIGTERM its process group, SIGKILL after S s (default 5)
+boxery job ls demo --prune [--older-than 7d]     # delete finished jobs and their logs (default: all)
 ```
 
-`run demo --bg …` also works.
+`run demo --bg …` is the only way to start a job; the `job` family lists, reads, waits for and stops them. `jobs`, `logs`, `wait` and `kill` are the older spellings and do the same. The notes below call the actions `wait`, `logs`, `kill` and `ls` by those short names.
 
 - **The command** follows the same rules as foreground `run`: exact arguments, `--cwd`, and `bash -c '…'` for shell syntax. It runs in a login shell (profile and grants loaded) with no stdin, and stdout and stderr go to `~/.boxery/jobs/ID.log` in the VM.
 - **States** are `running`, `exited` (any exit code, including failures) or `lost`. `lost` means the job stopped without recording an exit code: the VM restarted, or it was killed outside boxery. Closing or killing the job's tmux session doesn't stop it; use `kill`.
@@ -186,10 +216,13 @@ For files that aren't in a repo, use `boxery cp` (above), `vm_copy` (pi/MCP), or
 ### Grants
 
 ```bash
-boxery grant demo llm:PROVIDER | http:HOST --cmd CMD | github | ssh-agent | env:VAR [--cmd CMD] | file:LOCAL[=REMOTE]
-boxery revoke demo SPEC… | all
-boxery grants demo [apply | --json]
+boxery access grant demo llm:PROVIDER | http:HOST --cmd CMD | github | ssh-agent | env:VAR [--cmd CMD] | file:LOCAL[=REMOTE]
+boxery access revoke demo SPEC… | all
+boxery access ls demo [--json]               # saved grant kinds and settings, without fetching values
+boxery access apply demo [--quiet]           # push its grants to the VM again
 ```
+
+`grant`, `revoke` and `grants NAME [apply | --json]` are the older spellings (`grants NAME` is `access ls`, `grants NAME apply` is `access apply`), and `agent-forward NAME on|off` is `access grant|revoke NAME ssh-agent`. `access ls` is read-only and takes only `NAME [--json]`: it never grants, revokes or applies, and it lists this machine's grant records for the selected host, not every controller's.
 
 Adding access prompts on `/dev/tty`, defaults to No, and fails without a controlling terminal; stdin (including `yes | …`) cannot approve. This includes `agent-forward NAME on`, `new --grant` / `--agent-forward`, and `fork --grants`. Creation-time grants are validated and approved before creating VMs. Listing, applying existing grants, revoking, and `agent-forward NAME off` never prompt. Both CLI and agent tools enforce the same deny directories. Grant commands and grant-enriched inventory (`ls`) require Node on the controller. A grant lookup failure makes `ls --json` fail without emitting partial/malformed JSON.
 
@@ -198,40 +231,41 @@ Headless automation can put the literal line `GRANT_CONFIRM=off` in the selected
 ### Shared pool
 
 ```bash
-boxery acquire [--ttl S] [--wait S]          # prints "NAME LEASE_ID"
-boxery renew NAME [--ttl S]
-boxery release NAME                          # VM is reset to its clean snapshot
-boxery leases [--json]                       # your leases
-boxery pool add|rm|ls                        # admin
+boxery lease acquire [--ttl S] [--wait S]    # prints "NAME LEASE_ID"
+boxery lease renew NAME [--ttl S]
+boxery lease release NAME                    # VM is reset to its clean snapshot
+boxery lease ls [--json]                     # your leases
+boxery pool add|rm|ls                        # admin: which VMs can be leased
 boxery runners once [--repo O/R | --org ORG] [--vms NAME,…] [--labels L,…] [--group ID]
                                              # local runner: one GitHub Actions job on a fresh pool VM, with your gh login
 boxery runners status|start|stop|config|token   # admin: host runners, the always-on runner service
 ```
 
-See [Shared pool & leases](pool.md) and [GitHub Actions runners](github-runners.md).
+`acquire`, `renew`, `release` and `leases` are the older spellings of the `lease` actions. See [Shared pool & leases](pool.md) and [GitHub Actions runners](github-runners.md).
 
 ### Misc
 
 ```bash
-boxery proxy-log [N]                         # which VM called which LLM provider
+boxery host proxy-log [N]                    # which VM called which LLM provider
 boxery version [--json]                      # controller + host versions; warns when the host is behind
-boxery backend                               # the host's VM backend; recorded for host ls / vm_info hosts
-boxery upgrade-host [--check] [--ref REF]    # update boxery on the host (see Install → Upgrading)
+boxery host backend                          # the host's VM backend; recorded for host ls / vm_info hosts
+boxery host upgrade [--check] [--ref REF]    # update boxery on the host (see Install → Upgrading)
 ```
+
+These `host` actions act on the selected host (`--host NAME`, else the default); `proxy-log`, `backend` and `upgrade-host` are the older spellings. `shapes` and `pin` stay top level.
 
 ### All commands
 
-Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it there, then `npm run docs:cli`. `--host NAME` before any command runs it on another host.
+Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit it there, then `npm run docs:cli`. `--host NAME` before any command runs it on another host. The last table lists the older spellings, each with the family action it is the same as.
 
 <!-- BEGIN generated: boxery commands (npm run docs:cli) -->
 
-**Setup & hosts**
+**Getting started**
 
 | Command | What it does |
 |---|---|
 | `boxery setup user@host\|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]`<br>`boxery setup local --backend openshell [OPTIONS]` | Configure a VM host (local = this machine), register your ssh key [→](install.md) |
-| `boxery host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B \| --profile P]`<br>`boxery host add NAME --config-dir DIR`<br>`boxery host ls [--json]`<br>`boxery host show NAME`<br>`boxery host use NAME`<br>`boxery host rm NAME` | Manage named hosts (host use sets the default) [→](hosts.md) |
-| `boxery build-base` | Build the host's desktop base image (one time, ~3 min) [→](#lifecycle) |
+| `boxery help [--all \| COMMAND [ACTION]]` | Show help for boxery, a command or a family action |
 
 **VMs**
 
@@ -245,18 +279,6 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 | `boxery resize NAME [--cpus N] [--mem MiB] [--disk GiB]` | Change a VM's size (restarts it if running; disk only grows) [→](#lifecycle) |
 | `boxery fork SRC DST... [--grants] [--shape S] [--cpus N --mem MiB --disk GiB]` | Copy a VM (running or not) into new VMs, ~10 s [→](#snapshots-and-forks) |
 | `boxery patch NAME\|--all [--wait S]` | Update a VM's guest software to the host's image layers [→](#lifecycle) |
-| `boxery pin NAME [--from-guest]` | Re-pin a VM's ssh host key (VMs made before keys were pinned) [→](security.md#vm-host-keys) |
-| `boxery shapes [--json]` | VM sizes defined on the host (* = default) [→](shapes.md) |
-
-**Snapshots & images**
-
-| Command | What it does |
-|---|---|
-| `boxery snap NAME [SNAP]` | Snapshot a VM's disk (Lima restarts a running VM) [→](#snapshots-and-forks) |
-| `boxery snaps NAME [--json]` | List a VM's snapshots |
-| `boxery revert NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) |
-| `boxery snap-rm NAME SNAP` | Delete a snapshot |
-| `boxery images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) |
 
 **Work in a VM**
 
@@ -267,56 +289,127 @@ Generated from the help `boxery help` shows (`controller/cli.mjs`); edit it ther
 | `boxery cp FROM TO` | Copy files and directories to, from and between VMs [→](copy.md) |
 | `boxery desktop NAME [--no-open]` | Open a VM's desktop in your browser (noVNC over ssh) [→](#desktop-and-ports) |
 | `boxery forward NAME PORT [LOCAL_PORT]` | Forward a VM port to localhost |
-| `boxery attach NAME [pi\|opencode\|shell] [SESSION]` | Attach to an agent in a persistent tmux session |
-| `boxery prompt NAME "TASK"` | Start a headless pi task in its own tmux session |
-| `boxery sessions NAME [--json]` | List a VM's tmux sessions |
+| `boxery attach NAME [pi\|opencode\|shell] [SESSION]` | Attach to an agent in a persistent tmux session (= agent attach) |
+| `boxery prompt NAME "TASK"` | Start a headless pi task in its own tmux session (= agent prompt) |
 
-**Background jobs**
-
-| Command | What it does |
-|---|---|
-| `boxery jobs NAME [--json]`<br>`boxery jobs NAME --prune [--older-than 7d] [--json]` | List background jobs (run --bg starts one) [→](#background-command-jobs) |
-| `boxery logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]` | Show a job's output (the last 200 lines) [→](#background-command-jobs) |
-| `boxery wait NAME JOB [--timeout S] [--json]` | Wait for a job; exits with its exit code [→](#background-command-jobs) |
-| `boxery kill NAME JOB [--grace S] [--json]` | Stop a job: SIGTERM its process group, then SIGKILL [→](#background-command-jobs) |
-
-**Access (grants)**
+**Command families (boxery FAMILY --help)**
 
 | Command | What it does |
 |---|---|
-| `boxery grant NAME SPEC... [--cmd CMD]` | Give a VM access to something on this machine (asks first) [→](grants.md) |
-| `boxery revoke NAME SPEC...\|all` | Take access away (pushed values are deleted from the VM) [→](grants.md) |
-| `boxery grants NAME [apply [--quiet] \| --json]` | Show a VM's grants, or push them again (apply) [→](grants.md) |
-| `boxery agent-forward NAME on\|off` | Same as grant/revoke NAME ssh-agent |
-
-**Shared pool & runners**
-
-| Command | What it does |
-|---|---|
-| `boxery acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) [→](pool.md) |
-| `boxery renew NAME [--ttl S]` | Extend your lease [→](pool.md) |
-| `boxery release NAME` | Give a leased VM back (it is reset to its clean snapshot) [→](pool.md) |
-| `boxery leases [--json]` | Your leases [→](pool.md) |
+| `boxery host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B \| --profile P]`<br>`boxery host add NAME --config-dir DIR`<br>`boxery host ls [--json]`<br>`boxery host show NAME`<br>`boxery host use NAME`<br>`boxery host rm NAME`<br>`boxery host build-base`<br>`boxery host upgrade [--check] [--ref REF] [--wait S] [--reinit]`<br>`boxery host proxy-log [N]`<br>`boxery host backend`<br>`boxery host backends [--json]`<br>`boxery host capabilities [--json \| --check]` | Named hosts, and maintenance of the selected host [→](hosts.md) |
+| `boxery snapshot create NAME [SNAP]`<br>`boxery snapshot ls NAME [--json]`<br>`boxery snapshot restore NAME SNAP`<br>`boxery snapshot rm NAME SNAP`<br>`boxery snapshot images [--json]` | Saved VM disk states: create, restore, list, delete [→](#snapshots-and-forks) |
+| `boxery agent attach NAME [pi\|opencode\|shell] [SESSION]`<br>`boxery agent prompt NAME "TASK"`<br>`boxery agent ls NAME [--json]` | Persistent coding-agent sessions in a VM [→](#shell-and-in-vm-agents) |
+| `boxery job ls NAME [--json]`<br>`boxery job ls NAME --prune [--older-than 7d] [--json]`<br>`boxery job logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]`<br>`boxery job wait NAME JOB [--timeout S] [--json]`<br>`boxery job kill NAME JOB [--grace S] [--json]` | Background jobs in a VM (run --bg starts one) [→](#background-command-jobs) |
+| `boxery access grant NAME SPEC... [--cmd CMD]`<br>`boxery access revoke NAME SPEC...\|all`<br>`boxery access ls NAME [--json]`<br>`boxery access apply NAME [--quiet]` | What a VM may use from this machine (grants) [→](grants.md) |
+| `boxery lease acquire [--ttl S] [--wait S] [--holder H]`<br>`boxery lease renew NAME [--ttl S]`<br>`boxery lease release NAME`<br>`boxery lease ls [--json]` | Borrow a VM from the shared pool [→](pool.md) |
 | `boxery pool add NAME`<br>`boxery pool rm NAME [--force]`<br>`boxery pool ls [--json]` | Manage the shared pool of leasable VMs (admin) [→](pool.md) |
 | `boxery runners once [--repo OWNER/REPO \| --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]`<br>`boxery runners status [--json] \| start \| stop \| token < FILE`<br>`boxery runners config [--repo OWNER/REPO \| --org ORG] [--vms NAME,...] [--count N] [--labels L,...] ...` | GitHub Actions runners on pool VMs [→](github-runners.md) |
 
-**Host & diagnostics**
+**boxery host — named hosts, and maintenance of the selected host**
 
 | Command | What it does |
 |---|---|
+| `boxery host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B \| --profile P]`<br>`boxery host add NAME --config-dir DIR` | Register DEST (user@host or local) as NAME [→](hosts.md) |
+| `boxery host ls [--json]` | List hosts: where each runs and its backend [→](hosts.md) |
+| `boxery host show NAME` | Print a host's profile directory [→](hosts.md) |
+| `boxery host use NAME` | Make NAME the default host [→](hosts.md) |
+| `boxery host rm NAME` | Forget a host (its VMs and profile data stay) [→](hosts.md) |
+| `boxery host build-base` | Build the host's desktop base image (one time, ~3 min) [→](#lifecycle) |
+| `boxery host upgrade [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services [→](install.md#upgrading) |
+| `boxery host proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host |
+| `boxery host backend` | The host's VM backend (recorded for host ls) |
+| `boxery host backends [--json]` | Backend support, requirements and capabilities [→](backends.md) |
+| `boxery host capabilities [--json \| --check]` | The selected host's platform and capabilities [→](backends.md) |
+
+**boxery snapshot — saved VM disk states: create, restore, list, delete**
+
+| Command | What it does |
+|---|---|
+| `boxery snapshot create NAME [SNAP]` | Snapshot a VM's disk (Lima restarts a running VM) [→](#snapshots-and-forks) |
+| `boxery snapshot ls NAME [--json]` | List a VM's snapshots |
+| `boxery snapshot restore NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) |
+| `boxery snapshot rm NAME SNAP` | Delete a snapshot |
+| `boxery snapshot images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) |
+
+**boxery agent — persistent coding-agent sessions in a VM**
+
+| Command | What it does |
+|---|---|
+| `boxery agent attach NAME [pi\|opencode\|shell] [SESSION]` | Attach to an agent in a persistent tmux session |
+| `boxery agent prompt NAME "TASK"` | Start a headless pi task in its own tmux session |
+| `boxery agent ls NAME [--json]` | List a VM's tmux sessions |
+
+**boxery job — background jobs in a VM (run --bg starts one)**
+
+| Command | What it does |
+|---|---|
+| `boxery job ls NAME [--json]`<br>`boxery job ls NAME --prune [--older-than 7d] [--json]` | List background jobs (run --bg starts one) [→](#background-command-jobs) |
+| `boxery job logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]` | Show a job's output (the last 200 lines) [→](#background-command-jobs) |
+| `boxery job wait NAME JOB [--timeout S] [--json]` | Wait for a job; exits with its exit code [→](#background-command-jobs) |
+| `boxery job kill NAME JOB [--grace S] [--json]` | Stop a job: SIGTERM its process group, then SIGKILL [→](#background-command-jobs) |
+
+**boxery access — what a VM may use from this machine (grants)**
+
+| Command | What it does |
+|---|---|
+| `boxery access grant NAME SPEC... [--cmd CMD]` | Give a VM access to something on this machine (asks first) [→](grants.md) |
+| `boxery access revoke NAME SPEC...\|all` | Take access away (pushed values are deleted from the VM) [→](grants.md) |
+| `boxery access ls NAME [--json]` | Show a VM's grant kinds and settings (read-only) [→](grants.md) |
+| `boxery access apply NAME [--quiet]` | Push a VM's grants to it again [→](grants.md) |
+
+**boxery lease — borrow a VM from the shared pool**
+
+| Command | What it does |
+|---|---|
+| `boxery lease acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) [→](pool.md) |
+| `boxery lease renew NAME [--ttl S]` | Extend your lease [→](pool.md) |
+| `boxery lease release NAME` | Give a leased VM back (it is reset to its clean snapshot) [→](pool.md) |
+| `boxery lease ls [--json]` | Your leases [→](pool.md) |
+
+**More**
+
+| Command | What it does |
+|---|---|
+| `boxery pin NAME [--from-guest]` | Re-pin a VM's ssh host key (VMs made before keys were pinned) [→](security.md#vm-host-keys) |
+| `boxery shapes [--json]` | VM sizes defined on the host (* = default) [→](shapes.md) |
 | `boxery version [--json]` | Controller and host versions; warns when the host is behind |
-| `boxery upgrade-host [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services [→](install.md#upgrading) |
-| `boxery backends [--json]` | Backend support, requirements and capabilities [→](backends.md) |
-| `boxery capabilities [--json \| --check]` | The selected host's platform and capabilities [→](backends.md) |
-| `boxery backend` | The host's VM backend (recorded for host ls) |
-| `boxery proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host |
-| `boxery help [COMMAND]` | Show help for boxery or a command |
+
+**Older spellings (still work; the same commands as the family actions)**
+
+| Command | What it does |
+|---|---|
+| `boxery build-base` | Build the host's desktop base image (one time, ~3 min) (= host build-base) [→](#lifecycle) |
+| `boxery snap NAME [SNAP]` | Snapshot a VM's disk (Lima restarts a running VM) (= snapshot create) [→](#snapshots-and-forks) |
+| `boxery snaps NAME [--json]` | List a VM's snapshots (= snapshot ls) |
+| `boxery revert NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) (= snapshot restore) |
+| `boxery snap-rm NAME SNAP` | Delete a snapshot (= snapshot rm) |
+| `boxery images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) (= snapshot images) |
+| `boxery sessions NAME [--json]` | List a VM's tmux sessions (= agent ls) |
+| `boxery jobs NAME [--json]`<br>`boxery jobs NAME --prune [--older-than 7d] [--json]` | List background jobs (run --bg starts one) (= job ls) [→](#background-command-jobs) |
+| `boxery logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]` | Show a job's output (the last 200 lines) (= job logs) [→](#background-command-jobs) |
+| `boxery wait NAME JOB [--timeout S] [--json]` | Wait for a job; exits with its exit code (= job wait) [→](#background-command-jobs) |
+| `boxery kill NAME JOB [--grace S] [--json]` | Stop a job: SIGTERM its process group, then SIGKILL (= job kill) [→](#background-command-jobs) |
+| `boxery grant NAME SPEC... [--cmd CMD]` | Give a VM access to something on this machine (asks first) (= access grant) [→](grants.md) |
+| `boxery revoke NAME SPEC...\|all` | Take access away (pushed values are deleted from the VM) (= access revoke) [→](grants.md) |
+| `boxery grants NAME [apply [--quiet] \| --json]` | Show a VM's grants, or push them again (apply) (= access ls \| access apply) [→](grants.md) |
+| `boxery agent-forward NAME on\|off` | Same as access grant\|revoke NAME ssh-agent |
+| `boxery acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) (= lease acquire) [→](pool.md) |
+| `boxery renew NAME [--ttl S]` | Extend your lease (= lease renew) [→](pool.md) |
+| `boxery release NAME` | Give a leased VM back (it is reset to its clean snapshot) (= lease release) [→](pool.md) |
+| `boxery leases [--json]` | Your leases (= lease ls) [→](pool.md) |
+| `boxery upgrade-host [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services (= host upgrade) [→](install.md#upgrading) |
+| `boxery backends [--json]` | Backend support, requirements and capabilities (= host backends) [→](backends.md) |
+| `boxery capabilities [--json \| --check]` | The selected host's platform and capabilities (= host capabilities) [→](backends.md) |
+| `boxery backend` | The host's VM backend (recorded for host ls) (= host backend) |
+| `boxery proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host (= host proxy-log) |
 
 <!-- END generated -->
 
 ## `boxery-host` (the VM host)
 
 `boxery-host help` lists every command; `boxery-host COMMAND --help` shows one. Generated from the same help (`host/help.mjs`); edit it there, then `npm run docs:cli`. `--profile NAME` before any command runs it in a second profile on this host (`~/.config/boxery-NAME`: its own backend, state, proxy port and services); `--profile NAME init --backend B` creates it with a free proxy port. `upgrade` keeps the code and each profile's state from before in `$BOXERY_CONF/pre-upgrade/` after a success too.
+
+Commands in messages name what you typed. The follow-up commands `boxery` prints (`run --bg`'s logs and wait, `prompt`, `acquire`, `ls`) keep your `--host NAME`; and when `boxery` runs a host command for you, it passes `BOXERY_CLI` (`boxery`, or `boxery --host NAME` if you gave one), so a host error suggests `boxery --host lab snap-rm demo s1` rather than `boxery-host snap-rm demo s1`. Commands only boxery-host has (`init`, …) keep its name. Called directly, boxery-host names itself.
 
 <!-- BEGIN generated: boxery-host commands (npm run docs:cli) -->
 
@@ -448,7 +541,7 @@ VM sizes the host offers, after merging its `shapes.json` over the built-ins ([S
 
 #### `boxery grants NAME --json`
 
-Local grant records (names and paths only; values are never stored or printed).
+(Also `boxery access ls NAME --json`.) Local grant specifications, including stored command text, without fetching values. With none recorded, the host is asked whether NAME exists: `[]` for a VM without grants, `no such vm: NAME` (exit 1) for one the host doesn't list. A host that can't be reached doesn't fail the listing.
 
 ```json
 [
@@ -468,7 +561,7 @@ Local grant records (names and paths only; values are never stored or printed).
 
 #### `boxery leases --json`
 
-Leases held by this machine (from `~/.boxery/leases`).
+(Also `boxery lease ls --json`.) Leases held by this machine (from `~/.boxery/leases`).
 
 ```json
 [
@@ -487,7 +580,7 @@ Leases held by this machine (from `~/.boxery/leases`).
 
 #### `boxery sessions NAME --json`
 
-tmux sessions in the VM (agents started by `attach` / `prompt`).
+(Also `boxery agent ls NAME --json`.) tmux sessions in the VM (agents started by `attach` / `prompt`).
 
 ```json
 [
@@ -498,7 +591,7 @@ tmux sessions in the VM (agents started by `attach` / `prompt`).
 
 #### `boxery jobs NAME --json`
 
-Background jobs in the VM (started by `run --bg` or `vm_jobs`), oldest first.
+(Also `boxery job ls NAME --json`.) Background jobs in the VM (started by `run --bg` or `vm_jobs`), oldest first.
 
 ```json
 [
@@ -539,12 +632,12 @@ Registered hosts, by name. Read from local profile files only: no host is contac
 | `dir` | string | profile directory (`config`, `ssh_config`, grants, leases) |
 | `default` | boolean | selected by `host use` (`default-host`; the first host registered starts as the default) |
 | `destination` | string \| null | where its VM host runs: `local` (this machine) or the ssh destination (`user@host` or an ssh-config alias). `null` when not set up |
-| `backend` | string \| null | `lima`, `libvirt`, `cloud-hypervisor`, `exe`, `boat`, … as recorded by `setup` or `boxery backend`; `null` if never recorded (an older profile: run `boxery --host NAME backend`; or a host that predates `boxery-host backend`) |
-| `same_as` | string[] | other names whose profile is the same directory: the same host and VMs (e.g. a second name imported with `--config-dir` for an existing profile) |
+| `backend` | string \| null | `lima`, `libvirt`, `cloud-hypervisor`, `exe`, `boat`, … as recorded by `setup` or `boxery backend`; `null` if never recorded (an older profile: run `boxery --host NAME host backend`; or a host that predates `boxery-host backend`) |
+| `same_as` | string[] | other names for the same host and VMs: the same profile directory (e.g. a second name imported with `--config-dir`), or the same destination and host-side profile (e.g. a second name added with `host add NAME DEST --profile P`); see [Named hosts](hosts.md) |
 
 #### `boxery snaps NAME --json`
 
-Snapshots of a VM, passed through from `boxery-host snaps NAME --json`. `size` is `null` when the backend does not report it. `age_days` is days since it was taken; `guest` is the guest software it holds (its VM's build record when it was taken), the same object as in `ls --json` except that `reboot_required` is `null` (a VM made from an image boots fresh).
+(Also `boxery snapshot ls NAME --json`.) Snapshots of a VM, passed through from `boxery-host snaps NAME --json`. `size` is `null` when the backend does not report it. `age_days` is days since it was taken; `guest` is the guest software it holds (its VM's build record when it was taken), the same object as in `ls --json` except that `reboot_required` is `null` (a VM made from an image boots fresh).
 
 ```json
 [

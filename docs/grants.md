@@ -5,19 +5,21 @@
 By default a VM can't reach anything on your machine, including LLM providers. A **grant** gives one VM access to one thing: an LLM provider, an HTTPS API, your ssh-agent, an env var, or a file. You control grants from your machine, per VM. They're off by default.
 
 ```bash
-boxery grant demo llm:chatgpt                         # LLM access through the host proxy: chatgpt | openai | anthropic | ollama
-boxery grant demo github                              # git clone/push + GitHub API over https; the token never enters the VM
-boxery grant demo github --readonly                   # …clone/fetch and API reads only
-boxery grant demo http:registry.npmjs.org --cmd 'npm token get'                 # any HTTPS API (bearer by default)
-boxery grant demo http:api.example.com --auth header:X-Api-Key --cmd 'pass show example'
-boxery grant demo ssh-agent                           # git over ssh (git@github.com:…) with your keys
-boxery grant demo env:GH_TOKEN --cmd 'gh auth token'  # value from a command…
-boxery grant demo env:NPM_TOKEN                       # …or from your current environment
-boxery grant demo file:.env                           # → /home/agent/project/.env
-boxery grant demo file:~/.npmrc=.npmrc                # remote paths are relative to /home/agent
-boxery grants demo                                    # list (boxery ls shows them too)
-boxery revoke demo env:GH_TOKEN                       # or: revoke demo all
+boxery access grant demo llm:chatgpt                              # LLM access through the host proxy: chatgpt | openai | anthropic | ollama
+boxery access grant demo github                                   # git clone/push + GitHub API over https; the token never enters the VM
+boxery access grant demo github --readonly                        # …clone/fetch and API reads only
+boxery access grant demo http:registry.npmjs.org --cmd 'npm token get'   # any HTTPS API (bearer by default)
+boxery access grant demo http:api.example.com --auth header:X-Api-Key --cmd 'pass show example'
+boxery access grant demo ssh-agent                                # git over ssh (git@github.com:…) with your keys
+boxery access grant demo env:GH_TOKEN --cmd 'gh auth token'       # value from a command…
+boxery access grant demo env:NPM_TOKEN                            # …or from your current environment
+boxery access grant demo file:.env                                # → /home/agent/project/.env
+boxery access grant demo file:~/.npmrc=.npmrc                     # remote paths are relative to /home/agent
+boxery access ls demo                                             # saved kinds and settings, without fetching values
+boxery access revoke demo env:GH_TOKEN                            # or: access revoke demo all
 ```
+
+`access ls` reads saved specifications without running value commands, reading granted files or environment values, or reapplying access. With none recorded, it asks the host whether the VM exists, so a typo reports `no such vm` rather than `no grants`. Stored `--cmd` text is shown verbatim, so a secret embedded in a command literal would be visible. Use commands that read a secret store instead.
 
 You can also grant at creation time, or from pi:
 
@@ -29,7 +31,7 @@ pi --vm demo --vm-grant llm:chatgpt,ssh-agent,env:GH_TOKEN,file:.env
 
 ## Confirmation
 
-New access requires a person by default. `boxery grant`, `agent-forward NAME on`, `new --grant` / `--agent-forward`, and `fork --grants` show what is granted, where it lands, the exposure warning and the revoke command. The CLI reads **only `/dev/tty`**, never stdin; the default is **No**. Piping `yes` does not approve. Without a controlling terminal it exits non-zero and gives agents a command to pass to the user, or suggests `vm_grant`.
+New access requires a person by default. `boxery access grant`, `agent-forward NAME on`, `new --grant` / `--agent-forward`, and `fork --grants` show what is granted, where it lands, the exposure warning and the revoke command. The CLI reads **only `/dev/tty`**, never stdin; the default is **No**. Piping `yes` does not approve. Without a controlling terminal it exits non-zero and gives agents a command to pass to the user, or suggests `vm_grant`.
 
 Listing, revoking and re-applying existing grants (including on connect, start, resize, revert and VM selection) do not prompt. pi's `/vm grant` and `--vm-grant` use pi's confirm dialog; print mode cannot approve. pi validates grants and checks that a dialog is available before creating a VM or acquiring a lease. `--vm new` asks before creation; a pool request asks for the actual VM after acquiring it and immediately releases the lease on decline or dialog failure. `vm_grant` uses the client's elicitation or dialog. All use the same prompt formatter and grant operations, without running the CLI after approval.
 
@@ -93,7 +95,7 @@ This is the way to get credentials into a VM on another [host](hosts.md). Grants
   - Files are symlinked into place and added to `.git/info/exclude`.
   - Files are read afresh on every apply. One whose path now leads through a symlink into `~/.ssh`, `~/.gnupg`, `~/.pi` or boxery's own state is skipped with a warning, and its old copy is removed from the VM. New grants into those directories are refused on both CLI and tool paths. Legacy stored grants named directly inside them retain their old apply behavior; revoke them if they should no longer be available.
 - **Reconciled on every apply.** Grants are re-applied on `grant`, `revoke`, `new`, `start`, `revert`, `attach`, `ssh`, and when pi selects the VM. Each apply makes the VM match the current grants exactly, so revoked values are deleted.
-- `boxery agent-forward NAME on|off` still works as an alias for `grant`/`revoke NAME ssh-agent`.
+- `boxery agent-forward NAME on|off` still works as an alias for `access grant`/`access revoke NAME ssh-agent`. The older spellings `grant`, `revoke` and `grants NAME [apply]` work too; `access ls NAME` lists only, and `access apply NAME` pushes the grants again.
 - A revoke that matches nothing warns `no grant …` instead of claiming to have removed access. Once a change is saved, cancellation does not interrupt SSH-config/connection reconciliation. If that follow-up fails, boxery explicitly says the change is **saved but not fully applied**; fix the reported error and retry the grant/revoke command.
 
 ## What to grant

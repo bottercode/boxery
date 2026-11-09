@@ -25,7 +25,7 @@ export PATH="$tmp/bin:$PATH"
 # The executable path is data, including an apostrophe, $, backticks, %, spaces and shell syntax.
 rel="bin/it's \$(touch NOT_EXECUTED) \`echo no\` % host"
 mkdir -p "$REMOTE_HOME/bin"
-printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo '"'"'[{"name":"demo","state":"running"}]'"'"' ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; esac\n' >"$REMOTE_HOME/$rel"
+printf '#!/usr/bin/env bash\ncase $1 in help) : ;; add-key) cat >/dev/null ;; ls) echo '"'"'[{"name":"demo","state":"running"}]'"'"' ;; connect) printf "CONNECTED:%%s:%%s\\n" "$2" "$3" ;; images) printf "via:%%s\\n" "${BOXERY_CLI-unset}" ;; esac\n' >"$REMOTE_HOME/$rel"
 chmod +x "$REMOTE_HOME/$rel"
 # Before any host is registered nothing is routed anywhere.
 if "$CLI" ls >/dev/null 2>&1; then echo 'routed without a host' >&2; exit 1; fi
@@ -39,6 +39,9 @@ if "$CLI" ls >/dev/null 2>&1; then echo 'routed without a host' >&2; exit 1; fi
 [ "$HOST_BIN" = "~/$rel" ]
 [ ! -e NOT_EXECUTED ]
 "$CLI" --host alpha ls | grep -q '^demo '
+# The remote host learns how boxery was run (BOXERY_CLI), for the commands its hints name.
+[ "$("$CLI" --host alpha images)" = "via:boxery --host alpha" ]
+[ "$("$CLI" images)" = "via:boxery" ]
 # Execute exactly the ProxyCommand resolved by OpenSSH: local shell -> ssh -> remote /bin/sh.
 proxy=$("$REAL_SSH" -F "$BOXERY_HOME/profiles/alpha/ssh_config" -G demo.boxery | sed -n 's/^proxycommand //p')
 # ssh -G retains tokens; model OpenSSH's percent substitution before /bin/sh executes it.
@@ -263,4 +266,100 @@ done
 : >"$PROFILE_LOG"
 "$CLI" setup user@fake --name epsilon --host-bin '~/bin/profiled' --backend exe >/dev/null
 grep -qx -- '--profile epsilon init --backend exe' "$PROFILE_LOG"
-echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures and remote quoting'
+# Default key (#220): ~/.ssh/id_{ed25519,ecdsa,rsa}.pub, else the key a registered host uses, else another
+# ~/.ssh/id_*.pub. It's found before the host's slower checks, and the error says what was tried.
+export BOXERY_HOME="$tmp/keys" HOME="$tmp/keys-home"
+mkdir -p "$HOME/.ssh" "$HOME/kid" "$HOME/kid2"
+keylog="$tmp/key-host.log"; keybin="$tmp/key-host"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\n[ "$1" != --profile ] || shift 2\ncase $1 in help) echo capabilities ;; add-key) cat >"%s.pub" ;; backend) [ -z "${KEY_BACKEND:-}" ] || echo "$KEY_BACKEND" ;; esac\n' "$keylog" "$keylog" >"$keybin"; chmod +x "$keybin"
+if out=$("$CLI" host add k0 local --host-bin "$keybin" 2>&1); then echo 'host add without any key succeeded' >&2; exit 1; fi
+printf '%s\n' "$out" | grep -qF 'no ssh public key found: tried ~/.ssh/id_ed25519.pub, id_ecdsa.pub and id_rsa.pub, the keys your registered hosts use, and other ~/.ssh/id_*.pub with their private key. Pass --key PATH.pub'
+if grep -q capabilities "$keylog"; then echo 'checked capabilities before finding a key' >&2; exit 1; fi
+[ ! -e "$BOXERY_HOME/host-registry/k0" ]
+# A new host-side profile: no init either before the key is found.
+if "$CLI" host add k0 local --host-bin "$keybin" --backend exe >/dev/null 2>&1; then echo 'host add --backend without any key succeeded' >&2; exit 1; fi
+if grep -q init "$keylog"; then echo 'ran init before finding a key' >&2; exit 1; fi
+if out=$("$CLI" host add k0 local --host-bin "$keybin" --key "$HOME/none.pub" 2>&1); then echo 'a missing --key was accepted' >&2; exit 1; fi
+printf '%s\n' "$out" | grep -qF "no such ssh public key: $HOME/none.pub"
+# OpenShell's gateway authenticates: no key needed.
+out=$(KEY_BACKEND=openshell "$CLI" host add shell local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -q 'no guest SSH key registration needed'
+grep -qx "IDENTITY=''" "$BOXERY_HOME/profiles/shell/config"
+rm -rf "$BOXERY_HOME" # (start again with no hosts)
+# The key a registered host already uses (IDENTITY as ssh_config reads it: ~/ is this machine's home), the
+# default host's first; only with its private half.
+printf 'ssh-ed25519 AAAAregistered\n' >"$HOME/kid/id_ed25519.pub"; : >"$HOME/kid/id_ed25519"
+printf 'ssh-ed25519 AAAAsecond\n' >"$HOME/kid2/id_ed25519.pub"; : >"$HOME/kid2/id_ed25519"
+for n in old other; do
+	mkdir -p "$tmp/keys-$n"; printf '#\n' >"$tmp/keys-$n/ssh_config"
+done
+printf "HOST='local'\nHOST_BIN='/bin/echo'\nIDENTITY='~/kid/id_ed25519'\n" >"$tmp/keys-old/config"
+printf "HOST='local'\nHOST_BIN='/bin/echo'\nIDENTITY='~/kid2/id_ed25519'\n" >"$tmp/keys-other/config"
+"$CLI" host add old --config-dir "$tmp/keys-old" >/dev/null # the default
+"$CLI" host add aaa --config-dir "$tmp/keys-other" >/dev/null
+out=$("$CLI" host add k1 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "no --key given: using $HOME/kid/id_ed25519.pub"
+grep -q AAAAregistered "$keylog.pub"; grep -qF "IDENTITY='$HOME/kid/id_ed25519'" "$BOXERY_HOME/profiles/k1/config"
+grep -q 'capabilities --check' "$keylog"
+"$CLI" host use aaa
+out=$("$CLI" host add k1b local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/kid2/id_ed25519.pub"
+# With no registered host to borrow from, another ~/.ssh/id_*.pub (what the help promises): not one without
+# its private key (someone else's), a certificate or a DSA key.
+export BOXERY_HOME="$tmp/keys2"
+printf 'ssh-ed25519 AAAAbob\n' >"$HOME/.ssh/id_bob.pub"
+printf 'ssh-dss AAAAdsa\n' >"$HOME/.ssh/id_dsa.pub"; : >"$HOME/.ssh/id_dsa"
+printf 'ssh-ed25519-cert-v01@openssh.com AAAAcert\n' >"$HOME/.ssh/id_ed25519_github-cert.pub"
+printf 'ssh-ed25519 AAAAgithub\n' >"$HOME/.ssh/id_ed25519_github.pub"; : >"$HOME/.ssh/id_ed25519_github"
+out=$("$CLI" host add k2 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_ed25519_github.pub"
+grep -q AAAAgithub "$keylog.pub"
+# The usual names come first; re-running setup keeps the key the host's VMs already trust.
+printf 'ssh-ed25519 AAAAusual\n' >"$HOME/.ssh/id_rsa.pub"
+out=$("$CLI" host add k3 local --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_rsa.pub"
+if printf '%s\n' "$out" | grep -q 'no --key given'; then echo 'noted a usual key' >&2; exit 1; fi
+out=$("$CLI" setup local --name k2 --host-bin "$keybin")
+printf '%s\n' "$out" | grep -qF "registering $HOME/.ssh/id_ed25519_github.pub"
+# Two names for one host-side profile are the same host (#221), though host add --profile P makes a profile
+# directory of its own: same destination and host profile, here also through a wrapper from before host
+# profiles (BOXERY_CONF=…/boxery-exe). ls lists that host once.
+export BOXERY_HOME="$tmp/same"
+samebin="$tmp/same-host"
+printf '#!/usr/bin/env bash\n[ "$1" != --profile ] || shift 2\ncase $1 in ls) echo '"'"'[{"name":"vm1","state":"running"}]'"'"' ;; esac\n' >"$samebin"; chmod +x "$samebin"
+printf '#!/usr/bin/env bash\nexport BOXERY_CONF="$HOME/.config/boxery-exe"\nexec "%s" "$@"\n' "$samebin" >"$tmp/boxery-host-exe"; chmod +x "$tmp/boxery-host-exe"
+mk() { mkdir -p "$tmp/same-$1"; printf '#\n' >"$tmp/same-$1/ssh_config"; printf '%s\n' "$2" >"$tmp/same-$1/config"; [ -z "${3:-}" ] || printf '%s\n' "$3" >"$tmp/same-$1/backend"; "$CLI" host add "$1" --config-dir "$tmp/same-$1" >/dev/null; }
+mk exe "HOST='local'
+HOST_BIN='$tmp/boxery-host-exe'" exe
+mk lab2 "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='exe'" exe
+mk lab3 "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='exe'"
+mk other "HOST='local'
+HOST_BIN='$samebin'
+HOST_PROFILE='iso'"
+# Wrappers count only when they say it plainly: --profile P too; not a BOXERY_CONF of its own (other state),
+# a profile in a comment, or one computed at run time.
+wrap() { printf '#!/usr/bin/env bash\n%s\n' "$2" >"$tmp/wrap-$1"; chmod +x "$tmp/wrap-$1"; mk "$1" "HOST='local'
+HOST_BIN='$tmp/wrap-$1'"; }
+wrap flag "exec \"$samebin\" --profile exe \"\$@\""
+wrap elsewhere "export BOXERY_CONF=/srv/scratch/boxery-exe; exec \"$samebin\" \"\$@\""
+wrap computed "P=lab # like: boxery-host --profile exe
+exec \"$samebin\" --profile \"\$P\" \"\$@\""
+mkdir -p "$tmp/same-lab2/grants"; printf 'ssh-agent\t\t\n' >"$tmp/same-lab2/grants/vm1" # lab2's own grant
+"$CLI" host ls --json | jq -e '[.[] | {(.name): .same_as}] | add == {computed: [], elsewhere: [], exe: ["flag", "lab2", "lab3"], flag: ["exe", "lab2", "lab3"],
+	lab2: ["exe", "flag", "lab3"], lab3: ["exe", "flag", "lab2"], other: []}' >/dev/null
+out=$("$CLI" ls)
+[ "$(printf '%s\n' "$out" | grep -c '^vm1 ')" -eq 4 ] # exe (for flag, lab2 and lab3 too), other, elsewhere, computed
+printf '%s\n' "$out" | grep -q '^exe (default; also flag, lab2, lab3): exe on this machine$'
+printf '%s\n' "$out" | grep -A1 '^exe (default' | grep -q '^vm1 .* grants (lab2) ssh-agent$'
+if printf '%s\n' "$out" | grep -q '^\(lab[23]\|flag\)'; then echo 'ls listed a second name for one host' >&2; exit 1; fi
+# A wrapper on another machine can't be read: matched by directory only.
+mk far "HOST='user@fake'
+HOST_BIN='~/bin/boxery-host-exe'"
+mk farp "HOST='user@fake'
+HOST_PROFILE='exe'"
+"$CLI" host ls --json | jq -e 'map(select(.name == "far" or .name == "farp") | .same_as) == [[], []]' >/dev/null
+echo 'PASS: named registry, first-host default, setup naming, host listing, host-side profiles, import, safe removal, isolation, failures, remote quoting, default keys and same hosts'

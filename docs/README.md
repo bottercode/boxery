@@ -10,7 +10,7 @@
 
 - **[pi extension](pi-extension.md)**: `pi --vm demo`, `/vm` commands, fan-out across VMs.
 - **[MCP server](mcp.md)**: Claude Code, Cursor, opencode, and other MCP clients.
-- **[CLI reference](cli.md)**: the `boxery` command on your laptop and `boxery-host` on the host.
+- **[CLI reference](cli.md)**: the `boxery` command on your laptop (everyday commands and [command families](cli.md#command-families)) and `boxery-host` on the host.
 
 ## Features
 

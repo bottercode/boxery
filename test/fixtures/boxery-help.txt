@@ -3,73 +3,49 @@ boxery — remote desktop VMs for coding agents
 Usage:
   boxery [--host NAME] COMMAND [ARGS...]
 
-Setup & hosts:
-  setup user@host|local         Configure a VM host (local = this machine), register your ssh key
-  host add|ls|show|use|rm       Manage named hosts (host use sets the default)
-  build-base                    Build the host's desktop base image (one time, ~3 min)
+Getting started:
+  setup user@host|local                 Configure a VM host (local = this machine), register your ssh key
+  help [--all | COMMAND]                Show help for boxery, a command or a family action
 
 VMs:
-  ls                            List VMs: every host's, a section each (--host NAME: one)
-  new NAME                      Create a VM
-  start NAME                    Start a stopped VM (pins its ssh host key where it can)
-  stop NAME                     Stop a VM
-  rm NAME                       Destroy a VM and its snapshots (revokes its LLM token)
-  resize NAME                   Change a VM's size (restarts it if running; disk only grows)
-  fork SRC DST...               Copy a VM (running or not) into new VMs, ~10 s
-  patch NAME|--all              Update a VM's guest software to the host's image layers
-  pin NAME                      Re-pin a VM's ssh host key (VMs made before keys were pinned)
-  shapes                        VM sizes defined on the host (* = default)
-
-Snapshots & images:
-  snap NAME [SNAP]              Snapshot a VM's disk (Lima restarts a running VM)
-  snaps NAME                    List a VM's snapshots
-  revert NAME SNAP              Restore a VM to a snapshot (keeps its name, address and token)
-  snap-rm NAME SNAP             Delete a snapshot
-  images                        Every snapshot on the host (new NAME --from VM@SNAP uses one)
+  ls                                    List VMs: every host's, a section each (--host NAME: one)
+  new NAME                              Create a VM
+  start NAME                            Start a stopped VM (pins its ssh host key where it can)
+  stop NAME                             Stop a VM
+  rm NAME                               Destroy a VM and its snapshots (revokes its LLM token)
+  resize NAME                           Change a VM's size (restarts it if running; disk only grows)
+  fork SRC DST...                       Copy a VM (running or not) into new VMs, ~10 s
+  patch NAME|--all                      Update a VM's guest software to the host's image layers
 
 Work in a VM:
-  ssh NAME[@HOST] [CMD...]      Shell into a VM (also: ssh NAME.boxery)
-  run NAME CMD [ARG...]         Run a command in ~/project, args as given (like docker exec)
-  cp FROM TO                    Copy files and directories to, from and between VMs
-  desktop NAME                  Open a VM's desktop in your browser (noVNC over ssh)
-  forward NAME PORT [LOCAL]     Forward a VM port to localhost
-  attach NAME [AGENT]           Attach to an agent in a persistent tmux session
-  prompt NAME "TASK"            Start a headless pi task in its own tmux session
-  sessions NAME                 List a VM's tmux sessions
+  ssh NAME[@HOST] [CMD...]              Shell into a VM (also: ssh NAME.boxery)
+  run NAME CMD [ARG...]                 Run a command in ~/project, args as given (like docker exec)
+  cp FROM TO                            Copy files and directories to, from and between VMs
+  desktop NAME                          Open a VM's desktop in your browser (noVNC over ssh)
+  forward NAME PORT [LOCAL]             Forward a VM port to localhost
+  attach NAME [AGENT]                   Attach to an agent in a persistent tmux session (= agent attach)
+  prompt NAME "TASK"                    Start a headless pi task in its own tmux session (= agent prompt)
 
-Background jobs:
-  jobs NAME                     List background jobs (run --bg starts one)
-  logs NAME JOB                 Show a job's output (the last 200 lines)
-  wait NAME JOB                 Wait for a job; exits with its exit code
-  kill NAME JOB                 Stop a job: SIGTERM its process group, then SIGKILL
+Command families (boxery FAMILY --help):
+  host add|ls|show|use|rm|…             Named hosts, and maintenance of the selected host
+  snapshot create|ls|restore|rm|images  Saved VM disk states: create, restore, list, delete
+  agent attach|prompt|ls                Persistent coding-agent sessions in a VM
+  job ls|logs|wait|kill                 Background jobs in a VM (run --bg starts one)
+  access grant|revoke|ls|apply          What a VM may use from this machine (grants)
+  lease acquire|renew|release|ls        Borrow a VM from the shared pool
+  pool add|rm|ls                        Manage the shared pool of leasable VMs (admin)
+  runners once|status|...               GitHub Actions runners on pool VMs
 
-Access (grants):
-  grant NAME SPEC...            Give a VM access to something on this machine (asks first)
-  revoke NAME SPEC...|all       Take access away (pushed values are deleted from the VM)
-  grants NAME [apply]           Show a VM's grants, or push them again (apply)
-  agent-forward NAME on|off     Same as grant/revoke NAME ssh-agent
-
-Shared pool & runners:
-  acquire                       Lease a VM from the shared pool (prints NAME LEASE_ID)
-  renew NAME                    Extend your lease
-  release NAME                  Give a leased VM back (it is reset to its clean snapshot)
-  leases                        Your leases
-  pool add|rm|ls                Manage the shared pool of leasable VMs (admin)
-  runners once|status|...       GitHub Actions runners on pool VMs
-
-Host & diagnostics:
-  version                       Controller and host versions; warns when the host is behind
-  upgrade-host                  Update boxery on the host and restart its services
-  backends                      Backend support, requirements and capabilities
-  capabilities                  The selected host's platform and capabilities
-  backend                       The host's VM backend (recorded for host ls)
-  proxy-log [N]                 Recent LLM and edge (http: grant) requests on the host
-  help [COMMAND]                Show help for boxery or a command
+More:
+  pin NAME                              Re-pin a VM's ssh host key (VMs made before keys were pinned)
+  shapes                                VM sizes defined on the host (* = default)
+  version                               Controller and host versions; warns when the host is behind
 
 Options:
-  --host NAME                   Run COMMAND on a host other than the default (boxery host use)
-  --json                        JSON output on listings (fields: docs/cli.md#json-output)
-  -h, --help                    Show help; boxery COMMAND --help shows a command's
+  --host NAME                           Run COMMAND on a host other than the default (boxery host use)
+  --json                                JSON output on listings (fields: docs/cli.md#json-output)
+  -h, --help                            Show help; boxery COMMAND --help shows a command's
+  help --all                            Every command, every family action and every older spelling
 
 Docs: https://github.com/modem-dev/boxery/blob/master/docs/cli.md
 Agents: prefer the vm_* tools (boxery-mcp or the pi extension): https://github.com/modem-dev/boxery/blob/master/docs/mcp.md

@@ -15,7 +15,7 @@ boxery host add laptop local --key ~/.ssh/id_ed25519.pub
 boxery host add hornet you@hornet --host-bin '~/.local/bin/boxery-host'
 # A second VM platform on a host that already runs one (here: exe.dev beside Lima on this Mac).
 boxery host add exe local --backend exe
-boxery --host exe build-base         # desktop base image, once (~3 min); headless VMs don't need it
+boxery --host exe host build-base    # desktop base image, once (~3 min); headless VMs don't need it
 
 boxery host ls                       # name, default marker, config directory, destination, backend, same-profile names
 boxery host show hornet              # prints its config directory (not credentials)
@@ -24,11 +24,11 @@ boxery ls                            # every host's VMs, a section each (the def
 boxery --host laptop ls              # just that host's
 boxery --host hornet new demo
 boxery --host hornet desktop demo
-boxery --host hornet grant demo ssh-agent
+boxery --host hornet access grant demo ssh-agent
 boxery host rm hornet                # forget registration only
 ```
 
-Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and without an explicit host or a default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands operate on the registry, not the selected host, and cannot be combined with `--host`.
+Names use `[a-z][a-z0-9-]{0,30}`. Unknown/invalid explicit names fail closed, and without an explicit host or a default host nothing is routed anywhere. `--host NAME` must precede the command. Registration commands (`host add`, `ls`, `show`, `use`, `rm`) operate on the registry, not the selected host, and cannot be combined with `--host`. The other `host` actions (`build-base`, `upgrade`, `proxy-log`, `backend`, `backends`, `capabilities`) act on the selected host: `boxery --host hornet host upgrade --check`.
 
 For SSH, `boxery ssh demo@lab` is shorthand for `boxery --host lab ssh demo`.
 The suffix names a registered host, not an SSH destination, and does not change the
@@ -36,7 +36,7 @@ default. `boxery ssh demo@lab hostname` runs a command there. If you also pass
 `--host`, it must match the suffix; conflicting selectors are rejected before any
 connection or grant reapplication. Other commands continue to use `--host NAME`.
 
-`host add NAME DEST [--key PUBKEY] [--host-bin PATH] [--backend B | --profile P]` never overwrites a registration or existing managed profile directory. DEST is `local` or an SSH destination/SSH-config alias (option-like destinations and shell syntax are rejected). HOST_BIN is **one executable path**, not a command expression. Quote `~/...` to leave it for the remote host; on `local`, it refers to the controller's home. Spaces and apostrophes are supported. Paths used in generated configuration cannot contain newlines, carriage returns or tabs. Setup checks the executable and registers the public key before publishing the profile. Failed checks do not select or register a partial profile. A remote key registration that has already succeeded cannot be rolled back if a subsequent local write fails. The first host registered becomes the default; later ones don't change it.
+`host add NAME DEST [--key PUBKEY] [--host-bin PATH] [--backend B | --profile P]` never overwrites a registration or existing managed profile directory. DEST is `local` or an SSH destination/SSH-config alias (option-like destinations and shell syntax are rejected). HOST_BIN is **one executable path**, not a command expression. Quote `~/...` to leave it for the remote host; on `local`, it refers to the controller's home. Spaces and apostrophes are supported. Paths used in generated configuration cannot contain newlines, carriage returns or tabs. Setup checks the executable and registers the public key before publishing the profile. Without `--key` it uses `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`; else the key a registered host already uses (its `IDENTITY`, the default host's first); else the first other `~/.ssh/id_*.pub`. Past the usual names, a key counts only when its private half is next to it, and certificates (`-cert.pub`) and DSA keys are skipped; setup says which key it picked. Re-running setup for a host keeps the key its VMs already trust. The key is found before the host's slower checks (`init`, `capabilities --check`), and the error says what was tried. Failed checks do not select or register a partial profile. A remote key registration that has already succeeded cannot be rolled back if a subsequent local write fails. The first host registered becomes the default; later ones don't change it.
 
 `setup DEST [--name NAME] [--key PUBKEY] [--host-bin PATH] [--backend B | --profile P]` is `host add` with a derived name: `local`, or DEST's host part (`you@hornet.example.com` → `hornet`). If NAME is already registered, setup reconfigures that host in place (new key, executable or destination) instead. It does not take `--host`.
 
@@ -74,7 +74,7 @@ local	*	/home/you/.boxery/profiles/local	local	lima	-
 
 * **DESTINATION** is the profile's `HOST`: `local` means the VM host is the machine running the controller (or the MCP server); otherwise it is the ssh destination or ssh-config alias. The CLI sources the trusted profile config to find it; MCP never executes it and parses only plain assignments (as `setup` writes them), so a computed value shows as unknown (`-` / `null`).
 * **BACKEND** lives on the VM host (`host.env`), so it is not read live. `setup` and `host add` record it in the profile's `backend` file (one line of data); `boxery [--host NAME] backend` asks the host and refreshes the record. Profiles set up earlier, or hosts that predate `boxery-host backend`, show `-` / `null` until then.
-* **SAME_AS** lists the other names registered for the same profile directory, for example after `host add laptop --config-dir ~/.boxery/profiles/local`: `local` and `laptop` are one host with the same VMs, not two.
+* **SAME_AS** lists the other names for the same host: registered for the same profile directory (for example after `host add laptop --config-dir ~/.boxery/profiles/local`), or for the same destination and host-side profile (`host add lab2 local --profile exe` next to an `exe` host already registered for that profile, which gets a directory of its own). `local` and `laptop` are one host with the same VMs, not two, and `ls` lists them once. The host-side profile is read from `HOST_PROFILE`, or, for a registration from before host profiles whose `HOST_BIN` is a wrapper script on this machine, from the wrapper's `BOXERY_CONF=$HOME/.config/boxery-P` or `--profile P` when those are literal and agree (anything else, or a wrapper on another machine, matches only by directory). Grants and lease keys stay with each name's profile directory: `--host lab2 grant …` is lab2's, and `ls` shows it in that host's section as `grants (lab2) …`, next to the listed name's own.
 
 ## Importing two existing profiles
 

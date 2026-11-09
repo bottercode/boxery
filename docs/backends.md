@@ -1,10 +1,10 @@
 # Backend support and capabilities
 
-Query the declarations with `boxery backends --json` (or `boxery-host backends --json`).
+Query the declarations with `boxery host backends --json` (or `boxery-host backends --json`; `boxery backends` is the older spelling).
 Query the **selected host's** configuration and local requirements with
-`boxery capabilities --json`. Agents use `vm_info {action:"capabilities"}` in both
+`boxery host capabilities --json`. Agents use `vm_info {action:"capabilities"}` in both
 MCP and pi. These queries do not start a backend, contact a provider or change files.
-Use `boxery capabilities --check` for setup preflight (nonzero on unsupported
+Use `boxery host capabilities --check` for setup preflight (nonzero on unsupported
 configurations or missing locally checkable setup requirements).
 
 ## Platforms and validation

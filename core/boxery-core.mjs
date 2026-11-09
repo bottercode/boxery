@@ -11,7 +11,7 @@ import path from "node:path";
 import * as linux from "../guests/linux.mjs";
 import { q } from "./shell.mjs";
 import { streamCopy } from "./copy-stream.mjs";
-import { VALID_DEST, shellWord } from "./ssh-config.mjs";
+import { DEFAULT_HOST_BIN, VALID_DEST, localHostBin, parseConfig, shellWord } from "./ssh-config.mjs";
 import { acquireLease, findLease, releaseLease, renewLease } from "./leases.mjs";
 import * as lifecycle from "./lifecycle.mjs";
 import { versions as versionInfo } from "./versions.mjs";
@@ -174,23 +174,74 @@ export function vmsAreRemote(destination, backend) {
 	return destination === "local" && backend ? false : null;
 }
 /**
+ * The host-side profile a registration reaches, as "DEST\tPROFILE" (PROFILE "" for the host's default one), or
+ * null when its config doesn't say plainly (one that needs a shell is never sourced here). Before host profiles
+ * (#88) another profile was a HOST_BIN wrapper script setting BOXERY_CONF=…/boxery-P or passing --profile P;
+ * on this machine that script is read too. @param {HostProfile} h
+ */
+function hostSide(h) {
+	const text = readProfileFile(path.join(h.dir, "config"));
+	const c = text == null ? null : parseConfig(text);
+	if (!c?.HOST || !VALID_DEST.test(c.HOST)) return null;
+	/** @type {string | null} */
+	let profile = c.HOST_PROFILE ?? "";
+	const bin = c.HOST_BIN ?? DEFAULT_HOST_BIN;
+	if (!profile && path.basename(bin) !== "boxery-host") {
+		if (c.HOST !== "local") return null; // a wrapper on another machine: can't tell
+		profile = wrapperProfile(localHostBin(bin, homedir()));
+		if (profile == null) return null;
+	}
+	return `${c.HOST}\t${profile}`;
+}
+/**
+ * The host profile a wrapper script on this machine selects, or null unless it says so plainly: every
+ * `--profile P` and `BOXERY_CONF=` outside comments must be literal and agree, and BOXERY_CONF must be the
+ * profile's own directory ($HOME/.config/boxery[-P]; anywhere else is state of its own). @param {string} file
+ */
+function wrapperProfile(file) {
+	if (!path.isAbsolute(file)) return null;
+	const text = readProfileFile(file, 16 * 1024);
+	if (text == null) return null;
+	const homes = ["$HOME", "${HOME}", "~", homedir()];
+	/** @type {Set<string>} */
+	const found = new Set();
+	for (const line of text.split("\n").map((l) => l.replace(/(^|\s)#.*$/, ""))) {
+		for (const m of line.matchAll(/--profile(?:[ =]+|$)(\S*)/g)) {
+			const p = /^(["']?)([a-z][a-z0-9-]{0,30})\1$/.exec(m[1]);
+			if (!p) return null; // computed ("$P") or missing
+			found.add(p[2]);
+		}
+		for (const m of line.matchAll(/BOXERY_CONF=(\S*)/g)) {
+			const v = /^(["']?)(.*?)\1;?$/.exec(m[1])?.[2] ?? "";
+			const home = homes.find((h) => v.startsWith(`${h}/.config/`));
+			const p = home ? /^boxery(?:-([a-z][a-z0-9-]{0,30}))?$/.exec(v.slice(`${home}/.config/`.length)) : null;
+			if (!p) return null; // a directory of its own, or computed
+			found.add(p[1] ?? "");
+		}
+	}
+	return found.size === 1 ? [...found][0] : null;
+}
+/**
  * Registered hosts with where each runs: {name, dir, default, destination, backend, same_as}. Reads only local
- * profile files (never sources them, never contacts a host). same_as names the other entries registered for
- * this profile directory: they are the same host.
+ * profile files (never sources them, never contacts a host). same_as names the other entries that are the same
+ * host: registered for this profile directory, or for the same destination and host-side profile (host add
+ * --profile P makes a directory of its own; hostSide). Grants and lease keys stay with each name's directory.
  * @returns {HostDescription[]}
  */
 export function describeHosts() {
 	let def = null;
 	try { def = resolveHost().name; } catch {}
 	const real = (/** @type {string} */ d) => { try { return realpathSync(d); } catch { return path.resolve(d); } };
-	const hosts = registeredHosts().map((h) => ({ host: h, real: real(h.dir) }));
-	return hosts.map(({ host: h, real: r }) => ({
-		name: h.name,
-		dir: h.dir,
-		default: h.name === def,
-		destination: hostDestination(h),
-		backend: hostBackend(h),
-		same_as: hosts.filter((o) => o.real === r && o.host.name !== h.name).map((o) => o.host.name),
+	const hosts = registeredHosts().map((h) => ({ host: h, real: real(h.dir), side: hostSide(h), backend: hostBackend(h) }));
+	// (One directory has one config, so one side: this stays transitive.)
+	const same = (/** @type {typeof hosts[number]} */ a, /** @type {typeof hosts[number]} */ b) => a.real === b.real || (a.side != null && a.side === b.side);
+	return hosts.map((a) => ({
+		name: a.host.name,
+		dir: a.host.dir,
+		default: a.host.name === def,
+		destination: hostDestination(a.host),
+		backend: a.backend,
+		same_as: hosts.filter((b) => b.host.name !== a.host.name && same(a, b)).map((b) => b.host.name),
 	}));
 }
 /**
@@ -370,8 +421,9 @@ export async function sshOk(vm, script, opts = {}) {
 export const noSuchVm = (vm) => `no such vm: ${vm} on host ${currentHost().name} (boxery ls lists them)`;
 
 /** A VM's problem, for a person or an agent. known: the host's records explain it (no such VM, not running, a
- *  pool VM without a lease), so nothing can have run there; otherwise message is what ssh said.
- *  @typedef {{ message: string, known: boolean }} VmProblem */
+ *  pool VM without a lease); otherwise message is what ssh said. missing: the host has no such VM, so whatever
+ *  a failed connection may have done there is gone with it. (A VM found stopped may have stopped mid-command.)
+ *  @typedef {{ message: string, known: boolean, missing?: boolean }} VmProblem */
 
 /**
  * Why ssh to VM `vm` exited 255, or null when it can be reached after all. 255 is ssh's own failure but also a
@@ -380,27 +432,30 @@ export const noSuchVm = (vm) => `no such vm: ${vm} on host ${currentHost().name}
  * connection of its own, which keeps that stderr; if it connects, the 255 was the command's. Otherwise the
  * host's VM list says what to do, else what that connection printed. Costs a connection and a host call (each
  * bounded to 20 s), so only failures call it; the fast path (connect, shared masters) is unchanged. env: ssh's
- * environment.
- * @param {string} vm @param {{ env?: NodeJS.ProcessEnv }} [opts] @returns {Promise<VmProblem | null>}
+ * environment; signal: stop asking (resolves as unreachable).
+ * @param {string} vm @param {{ env?: NodeJS.ProcessEnv, signal?: AbortSignal }} [opts] @returns {Promise<VmProblem | null>}
  */
-export async function vmProblem(vm, { env } = {}) {
+export async function vmProblem(vm, { env, signal } = {}) {
 	assertName(vm);
 	const probe = await new Promise((/** @type {(r: { code: number | null, stderr: string }) => void} */ resolve) => {
 		const child = spawn("ssh", ["-F", currentHost().sshConf, "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", `${vm}.boxery`, "true"],
 			{ stdio: ["ignore", "ignore", "pipe"], ...(env ? { env } : {}) });
 		let stderr = "";
 		child.stderr.on("data", (/** @type {Buffer} */ d) => { if (stderr.length < 16 * 1024) stderr += d.toString(); });
-		const timer = setTimeout(() => child.kill(), 20_000);
-		child.on("error", (e) => { clearTimeout(timer); resolve({ code: null, stderr: e.message }); });
-		child.on("close", (code) => { clearTimeout(timer); resolve({ code, stderr }); });
+		const stop = () => child.kill();
+		const timer = setTimeout(stop, 20_000);
+		signal?.addEventListener("abort", stop, { once: true });
+		const done = (/** @type {{ code: number | null, stderr: string }} */ r) => { clearTimeout(timer); signal?.removeEventListener("abort", stop); resolve(r); };
+		child.on("error", (e) => done({ code: null, stderr: e.message }));
+		child.on("close", (code) => done({ code, stderr }));
 	});
 	if (probe.code === 0) return null;
 	const said = probe.stderr.split("\n").map((l) => l.trim()).filter(Boolean).slice(-3).join("; ");
 	let vms;
-	try { vms = /** @type {VmInfo[]} */ (await lifecycle.listVms({}, { signal: AbortSignal.timeout(20_000) })); }
+	try { vms = await listVmsWithin(20_000, signal); }
 	catch (e) { return { message: `VM "${vm}" unreachable over ssh: ${said || /** @type {Error} */ (e).message}`, known: false }; }
 	const v = vms.find((r) => r.name === vm);
-	if (!v) return { message: noSuchVm(vm), known: true };
+	if (!v) return { message: noSuchVm(vm), known: true, missing: true };
 	if (v.state && !["running", "idle"].includes(v.state))
 		return { message: /ing$/.test(v.state) ? `VM ${vm} is ${v.state}; try again when it's running (boxery ls shows its state)` : `VM ${vm} is ${v.state}; start it: boxery start ${vm}`, known: true };
 	if (v.lease) {
@@ -899,7 +954,9 @@ export async function copyTool({ from, to }, { current, localCwd = process.cwd()
 	};
 	const source = endpoint(src);
 	const destination = endpoint(dst, path.posix.basename(source.path));
-	const bytes = await streamCopy(source, destination, { signal });
+	// (Each endpoint on its own host: HOST/NAME:path may name another.)
+	const unreachable = (/** @type {CopyEndpoint} */ e) => withHost(e === source ? src.host : dst.host, () => vmProblem(/** @type {string} */ (e.vm), { signal }));
+	const bytes = await streamCopy(source, destination, { signal, unreachable });
 	const fmt = (/** @type {Loc & { host: HostProfile }} */ l, /** @type {CopyEndpoint} */ e) => `${l.vm ? `${l.host.name}/${l.vm}` : "local"}:${e.path}`;
 	return { text: `copied ${fmt(src, source)} → ${fmt(dst, destination)} (${bytes} bytes tar)` };
 }
@@ -1038,6 +1095,9 @@ process.exit(0);`;
 /** @type {() => Promise<VmInfo[]>} */
 export const listVms = async () => /** @type {any} */ (await lifecycle.listVms());
 
+/** listVms, given up after MS (or on signal): for a check that mustn't hang on a slow host. @param {number} ms @param {AbortSignal} [signal] @returns {Promise<VmInfo[]>} */
+const listVmsWithin = async (ms, signal) => /** @type {any} */ (await lifecycle.listVms({}, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms) }));
+
 /** VM sizes defined on the host: {default, shapes: {NAME: {cpus, mem, disk}}} (docs/shapes.md). */
 /** @type {() => Promise<Shapes>} */
 export const listShapes = () => lifecycle.hostJson(["shapes"]);
@@ -1122,6 +1182,18 @@ export function formatVms(vms) {
 	if (!outdated.length) return table;
 	// Patching restarts VMs and is the user's call: agents only point it out.
 	return `${table}\noutdated guest software: ${outdated.map((v) => `${v.name} (${(v.guest?.reasons ?? []).join(", ")})`).join("; ")}. Tell the user; they can update it with: boxery patch NAME`;
+}
+
+/** VM's grants (listGrants: this machine's records). With none recorded, the host is asked whether VM exists, so
+ *  a typo says "no such vm" rather than "no grants"; a host that can't be asked doesn't fail the listing.
+ *  @param {string} vm @returns {Promise<Grant[]>} */
+export async function vmGrants(vm) {
+	const grants = listGrants(assertName(vm));
+	if (grants.length) return grants;
+	let vms;
+	try { vms = await listVmsWithin(20_000); } catch { return grants; }
+	if (!vms.some((v) => v.name === vm)) throw new Error(noSuchVm(vm));
+	return grants;
 }
 
 /** @param {string} name @param {Grant[]} grants */
