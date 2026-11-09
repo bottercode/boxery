@@ -5,7 +5,8 @@
 #            exe and boat backends, launchd paths): every OS, macOS included
 #   linux/   code that only runs on Linux (the libvirt and Cloud Hypervisor backends, systemd units)
 #   logic/   Node logic driven through the fake backend: the same on any OS, so CI runs it on Linux only
-# BASH_UNDER_TEST=/path/to/bash runs them under another bash (e.g. 3.2); JOBS=N caps how many run at once
+# When unsure, use common/: a test there that didn't need macOS costs CI time; one missing from it loses
+# coverage. BASH_UNDER_TEST=/path/to/bash runs them under another bash (e.g. 3.2); JOBS=N caps how many run at once
 # (default: the CPU count). Each test's output is printed whole once it finishes, in start order. Tests
 # must keep their state in their own mktemp -d.
 # This script itself runs under bash 3.2 on macOS, so no wait -n: it polls for finished tests.
@@ -14,6 +15,10 @@ cd "$(dirname "$0")"
 B=${BASH_UNDER_TEST:-bash}
 JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}
 [ "$JOBS" -ge 1 ] || JOBS=1
+# only the directories are globbed: a test left up here would never run, so stop until it is moved
+for t in *.sh; do
+	[ "$t" = run.sh ] || { echo "run.sh: test/shell/$t would never run; move it into common/, linux/ or logic/ (see the top of run.sh)" >&2; exit 2; }
+done
 [ $# -gt 0 ] || set -- */
 files=()
 for d in "$@"; do
