@@ -47,6 +47,11 @@ export async function allHostsListing(s, command, args) {
 					host: hs.host, config: hs.config,
 					onData: (d, from) => { if (from === "stderr") notes += d.toString("utf8"); },
 				});
+				if (command === "upgrade-host") {
+					// Only --check reaches this listing path; its report is written to stderr.
+					text = notes.trim();
+					notes = "";
+				}
 				if (command === "version") {
 					const h = JSON.parse(text);
 					if (typeof h.version !== "string") throw new Error("invalid host version response");

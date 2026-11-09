@@ -19,6 +19,7 @@ if (process.env.FAIL_HOST === name) { console.error('unreachable fixture host');
 if (args[0] === 'help') { console.log('known-hosts NAME'); process.exit(); }
 if (args[0] === 'version') console.log(JSON.stringify({version:'0.1.0',describe:null,install:'npm'}));
 else if (args.includes('--json')) console.log(JSON.stringify({name, args}));
+else if (args[0] === 'upgrade' && args.includes('--check')) console.error('==> fetching origin\\n==> up to date at v0.12.0\\n==> profiles: ' + name);
 else if (args[0] === 'images') console.log('IMAGE                                    CREATED               SIZE        AGE    GUEST\\n' + name + '@s1                                  2026-01-01            1GiB        1d     current');
 else { console.log(name + ': ' + args.join(' ')); console.error('==> fixture note'); }
 `);
@@ -57,6 +58,19 @@ test("read-only text listings share ls headings, default-first order and alias d
 			assert.equal((r.stdout.match(/host        0.1.0/g) ?? []).length, 3);
 			assert.equal((r.stderr.match(/is older than this controller/g) ?? []).length, 3);
 		}
+	}
+});
+
+test("upgrade checks group stderr-only reports under each host without prefixes", () => {
+	for (const args of [["upgrade-host", "--check"], ["host", "upgrade", "--check"]]) {
+		const r = run(args);
+		assert.equal(r.status, 0, r.stderr);
+		assert.doesNotMatch(r.stderr, /==>|fetching origin|up to date|profiles:/);
+		assert.equal(r.stdout, [
+			"beta (default; also beta-alias): fake on this machine",
+			"alpha: fake on this machine",
+			"gamma: fake on this machine",
+		].map((heading, i) => `${heading}\n==> fetching origin\n==> up to date at v0.12.0\n==> profiles: ${["beta", "alpha", "gamma"][i]}`).join("\n\n") + "\n");
 	}
 });
 
