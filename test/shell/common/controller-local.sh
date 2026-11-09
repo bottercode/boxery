@@ -20,7 +20,8 @@ cat >"$tmp/bin/ssh" <<STUB
 for a in "\$@"; do case \$a in -O) exit 0 ;; esac; done
 host=""; port=""; while [ \$# -gt 0 ]; do case \$1 in -p) port=\$2; shift 2 ;; -F|-o|-i) shift 2 ;; *.boxery) host=\${1%.boxery}; shift; break ;; agent@*) shift; break ;; *) shift ;; esac; done
 if [ -z "\$host" ] && [ -n "\$port" ]; then for d in $tmp/vms/*/; do [ "\$(cat "\$d/port" 2>/dev/null)" = "\$port" ] && host=\$(basename "\$d"); done; fi
-case "\$*" in *cloud-init*|*6080*|*boxery-provision*) exit 0 ;; esac
+# the host's readiness waits, as whole commands: a copy's random staging name can contain "6080"
+case "\$*" in *"cloud-init status"*|*"127.0.0.1:6080/vnc.html"*|*"/var/log/boxery-provision.ok"*) exit 0 ;; esac
 [ -n "\$host" ] || exit 0
 vm=$tmp/vms/\$host; [ -d "\$vm" ] || { echo "no such vm" >&2; exit 255; }
 mkdir -p "\$vm/home/project/.git/info"
