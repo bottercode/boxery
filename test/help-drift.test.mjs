@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const { COMMANDS } = await import("../controller/cli.mjs");
-const { renderTop } = await import("../controller/usage.mjs");
+const { actionHelp, renderTop } = await import("../controller/usage.mjs");
 const { HELP: OPENSHELL_HELP } = await import("../controller/setup-openshell.mjs");
 const { HOST_COMMANDS } = await import("../host/help.mjs");
 /** @typedef {import("../help/index.mjs").Help} Help */
@@ -66,10 +66,15 @@ function flagsInHelp(h) {
 }
 
 const commands = Object.entries(COMMANDS).flatMap(([n, e]) => ("help" in e ? [/** @type {const} */ ([n, e.help])] : []));
+/** Every family and its actions: [family, action, the action's help, the command it runs]. */
+const actions = Object.entries(COMMANDS).flatMap(([f, e]) => ("actions" in e && e.actions ? Object.entries(e.actions).map(([a, x]) => /** @type {const} */ ([f, a, /** @type {Help} */ (actionHelp(COMMANDS, f, a)), x.command])) : []));
+/** What a help line's examples and see-also may be checked against: commands and family actions. */
+const everyHelp = [...commands.map(([n, h]) => /** @type {const} */ ([n, h])), ...actions.map(([f, a, h]) => /** @type {const} */ ([`${f} ${a}`, h]))];
 
 test("each command's help names exactly the flags its code reads", () => {
 	for (const [name, h] of commands) {
-		if (name in HOST_PARSED || name === "help") continue;
+		// (families have no handler of their own: their actions are checked below)
+		if (name in HOST_PARSED || name === "help" || "actions" in COMMANDS[name]) continue;
 		const code = flagsInCode(name), help = flagsInHelp(h);
 		// (setup: OpenShell's options live in its own --help)
 		const undocumented = [...code].filter((f) => !help.has(f) && !(name === "setup" && OPENSHELL_HELP.includes(f)));
@@ -85,6 +90,39 @@ test("pass-through commands document only flags boxery-host takes", () => {
 		const host = flagsInHelp(/** @type {{ help: Help }} */ (HOST_COMMANDS[hostCmd]).help);
 		const extra = [...mine].filter((f) => !host.has(f) && !(name === "runners" && f.startsWith("--") && /** @type {{ help: Help }} */ (COMMANDS.runners).help.usage[0].includes(f)));
 		assert.deepEqual(extra, [], `boxery ${name} documents ${extra.join(", ")}, which boxery-host ${hostCmd} doesn't take`);
+	}
+});
+
+test("a family's actions run existing commands, and document only flags those read", () => {
+	assert.ok(actions.length >= 30, "the families lost their actions");
+	for (const [f, a, h, command] of actions) {
+		assert.match(h.usage[0], new RegExp(`^${f} ${a}\\b`), `${f} ${a}: its first usage line must start with it`);
+		if (!command) continue; // host's registry actions: below
+		assert.ok(Object.hasOwn(COMMANDS, command) && "run" in COMMANDS[command], `${f} ${a} runs ${command}, which has no handler in COMMANDS`);
+		// (the flags are the command's own, or what the action's own usage, written for its arguments, takes from them)
+		// (a pass-through command's flags are boxery-host's)
+		const code = command in HOST_PARSED ? flagsInHelp(/** @type {{ help: Help }} */ (HOST_COMMANDS[HOST_PARSED[command]]).help) : flagsInCode(command), mine = flagsInHelp(h);
+		const unread = [...mine].filter((x) => !code.has(x) && !["--help", "-h"].includes(x));
+		assert.deepEqual(unread, [], `boxery ${f} ${a} documents ${unread.join(", ")}, which ${command}'s code never reads`);
+		if (!/** @type {{ actions: Record<string, { help?: Help }> }} */ (COMMANDS[f]).actions[a].help?.usage) assert.deepEqual([...mine].sort(), [...flagsInHelp(/** @type {{ help: Help }} */ (COMMANDS[command]).help)].sort(), `${f} ${a} should document ${command}'s flags`);
+	}
+	// host's registry actions read the registry's flags between them
+	const registry = new Set(actions.filter(([f, , , c]) => f === "host" && !c).flatMap(([, , h]) => [...flagsInHelp(h)]));
+	assert.deepEqual([...registry].sort(), [...flagsInCode("host")].sort(), "host's registry actions' flags are not what controller/hosts.mjs reads");
+	// no action names an alias (access ls and apply both run grants, kept apart by their arguments)
+	for (const [f, e] of Object.entries(COMMANDS)) {
+		if (!("actions" in e) || !e.actions) continue;
+		const cmds = Object.values(e.actions).flatMap((x) => (x.command ? [x.command] : []));
+		for (const c of cmds) assert.ok(!("alias" in COMMANDS[c]), `${f} runs ${c}, an alias`);
+	}
+});
+
+test("older spellings are hidden from boxery help exactly when a family action runs them (attach and prompt stay)", () => {
+	const folded = new Set(actions.flatMap(([, , , c]) => (c ? [c] : [])));
+	for (const [name, h] of commands) {
+		if ("actions" in COMMANDS[name]) { assert.equal(h.group, "families", `${name}: a family belongs to the families group`); continue; }
+		const prominent = ["attach", "prompt"].includes(name);
+		assert.equal(h.group === "legacy", folded.has(name) && !prominent || name === "agent-forward", `${name}: ${h.group === "legacy" ? "is hidden as an older spelling but no family action runs it" : "is run by a family action but listed as a command"}`);
 	}
 });
 
@@ -144,7 +182,7 @@ test("no host module keeps its own usage text (internal entry points aside)", ()
 });
 
 test("examples run real commands with documented flags", () => {
-	for (const [name, h] of commands) {
+	for (const [name, h] of everyHelp) {
 		for (const [, line] of h.examples ?? []) {
 			for (const part of line.split(/\s*&&\s*/)) {
 				const words = part.split(/\s+/);
@@ -153,8 +191,15 @@ test("examples run real commands with documented flags", () => {
 				if (words[i] === "--host") i += 2;
 				const cmd = words[i];
 				assert.ok(Object.hasOwn(COMMANDS, cmd), `${name} example uses an unknown command: ${part}`);
-				const target = /** @type {{ help: Help }} */ (COMMANDS[cmd]);
-				const documented = flagsInHelp(target.help);
+				let target = /** @type {{ help: Help }} */ (COMMANDS[cmd]).help;
+				// a family's action: its help, and its words start after it
+				const entry = COMMANDS[cmd];
+				if ("actions" in entry && entry.actions && words[i + 1] && !words[i + 1].startsWith("-")) {
+					const found = actionHelp(COMMANDS, cmd, words[i + 1]);
+					assert.ok(found, `${name} example: ${cmd} has no action ${words[i + 1]} (${part})`);
+					target = /** @type {Help} */ (found); i++;
+				}
+				const documented = flagsInHelp(target);
 				// boxery's own words: for run and ssh, up to the command they run in the VM.
 				let own = words.slice(i + 1);
 				if (cmd === "run" || cmd === "ssh") {
@@ -169,8 +214,9 @@ test("examples run real commands with documented flags", () => {
 
 test("seeAlso names commands; docs links point at real headings", () => {
 	const slug = (/** @type {string} */ t) => t.toLowerCase().replace(/<[^>]+>/g, "").replace(/[`*]/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s/g, "-");
-	for (const [name, h] of commands) {
-		for (const c of h.seeAlso ?? []) assert.ok(Object.hasOwn(COMMANDS, c), `${name}: seeAlso ${c} is not a command`);
+	for (const [name, h] of everyHelp) {
+		// (an action's see-also may be family actions: "access revoke")
+		for (const c of h.seeAlso ?? []) assert.ok(Object.hasOwn(COMMANDS, c) || actions.some(([f, a]) => `${f} ${a}` === c), `${name}: seeAlso ${c} is not a command or a family action`);
 		if (!h.docs) continue;
 		const [file, anchor] = h.docs.split("#");
 		assert.ok(readdirSync(path.join(ROOT, "docs")).includes(file), `${name}: docs/${file} doesn't exist`);
@@ -182,7 +228,7 @@ test("seeAlso names commands; docs links point at real headings", () => {
 });
 
 test("summaries are one short line", () => {
-	for (const [name, h] of commands) {
+	for (const [name, h] of everyHelp) {
 		assert.ok(h.summary.length <= 66, `${name}: summary over 66 characters; put the rest in details`);
 		assert.doesNotMatch(h.summary, /\n|\.$/, `${name}: summary is one line without a final period`);
 		assert.match(h.usage[0], new RegExp(`^${name}\\b`), `${name}: its first usage line must start with ${name}`);
@@ -202,12 +248,15 @@ test("docs/cli.md's command reference is up to date (npm run docs:cli)", async (
 	assert.ok(text === next, "docs/cli.md: the command reference is out of date; run: npm run docs:cli");
 });
 
-const golden = path.join(ROOT, "test/fixtures/boxery-help.txt");
-test("boxery help matches test/fixtures/boxery-help.txt (BOXERY_UPDATE_GOLDEN=1 rewrites it)", () => {
-	const home = mkdtempSync(path.join(tmpdir(), "boxery-help-"));
-	after(() => rmSync(home, { recursive: true, force: true }));
-	const out = spawnSync(path.join(ROOT, "controller/boxery"), ["help"], { encoding: "utf8", env: { ...process.env, BOXERY_HOME: home, NO_COLOR: "1" } }).stdout;
-	assert.equal(out, renderTop(COMMANDS));
-	if (process.env.BOXERY_UPDATE_GOLDEN) writeFileSync(golden, out);
-	assert.equal(out, readFileSync(golden, "utf8"), "boxery help changed: review it, then BOXERY_UPDATE_GOLDEN=1 node --test test/help-drift.test.mjs");
-});
+// boxery help, and boxery help --all with every family action and older spelling.
+for (const [file, args, all] of /** @type {const} */ ([["boxery-help.txt", ["help"], false], ["boxery-help-all.txt", ["help", "--all"], true]])) {
+	const golden = path.join(ROOT, "test/fixtures", file);
+	test(`boxery ${args.join(" ")} matches test/fixtures/${file} (BOXERY_UPDATE_GOLDEN=1 rewrites it)`, () => {
+		const home = mkdtempSync(path.join(tmpdir(), "boxery-help-"));
+		after(() => rmSync(home, { recursive: true, force: true }));
+		const out = spawnSync(path.join(ROOT, "controller/boxery"), args, { encoding: "utf8", env: { ...process.env, BOXERY_HOME: home, NO_COLOR: "1" } }).stdout;
+		assert.equal(out, renderTop(COMMANDS, all));
+		if (process.env.BOXERY_UPDATE_GOLDEN) writeFileSync(golden, out);
+		assert.equal(out, readFileSync(golden, "utf8"), `${args.join(" ")} changed: review it, then BOXERY_UPDATE_GOLDEN=1 node --test test/help-drift.test.mjs`);
+	});
+}

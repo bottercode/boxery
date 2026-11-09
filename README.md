@@ -147,7 +147,7 @@ And ask: *"Clone my repo in a VM, start the dev server, and screenshot the homep
 | `vm_manage` `vm_info` | Create, fork, snapshot, revert and remove VMs |
 | `vm_grant` `vm_lease` | Ask you to grant access (GitHub, ssh-agent, env vars), or lease a VM from a shared pool |
 
-You can also drive VMs yourself with the [CLI](docs/cli.md): `boxery attach demo`, `boxery desktop demo`.
+You can also drive VMs yourself with the [CLI](docs/cli.md): `boxery attach demo`, `boxery desktop demo`. Less common commands are grouped in families (`boxery snapshot`, `job`, `access`, `lease`, `host`, `agent`): `boxery help` lists them, `boxery help --all` every command and older spelling.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/modem-dev/boxery/master/docs/computer-use.png" alt="A boxery VM's XFCE desktop: a Vite dev server and htop in terminals, a file manager, and Chrome showing the app on localhost" width="760">
