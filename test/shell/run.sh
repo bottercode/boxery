@@ -2,15 +2,22 @@
 # Run all offline shell tests, in parallel. BASH_UNDER_TEST=/path/to/bash runs them under another bash
 # (e.g. 3.2); JOBS=N caps how many run at once (default: the CPU count). Each test's output is printed
 # whole once it finishes, in list order. Tests must keep their state in their own mktemp -d.
+# SKIP="a.sh b.sh" leaves those files out (CI's macOS job runs only what macOS can break).
 # This script itself runs under bash 3.2 on macOS, so no wait -n: it polls for finished tests.
 set -euo pipefail
 cd "$(dirname "$0")"
 B=${BASH_UNDER_TEST:-bash}
 JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}
 [ "$JOBS" -ge 1 ] || JOBS=1
+all=" host-exe-backend.sh host-boat-backend.sh controller-local.sh controller-runners-once.sh host-patch.sh host-leases.sh host-dispatcher.sh host-upgrade.sh host-ch-backend.sh host-output.sh host-images.sh host-shapes.sh host-init.sh controller-hosts.sh controller-hostkeys.sh host-runners.sh host-lima-backend.sh host-libvirt-backend.sh controller-config.sh backend-recovery.sh "
+# a name SKIP doesn't know is a typo or a renamed test: fail rather than quietly run it
+for t in ${SKIP:-}; do
+	case $all in *" $t "*) ;; *) echo "SKIP names $t, which isn't a shell test" >&2; exit 2 ;; esac
+done
 tests=()
 # Slowest first, so a long test doesn't start last.
-for t in host-exe-backend.sh host-dispatcher.sh controller-local.sh host-leases.sh host-ch-backend.sh host-boat-backend.sh host-upgrade.sh host-patch.sh host-runners.sh controller-hostkeys.sh controller-runners-once.sh host-lima-backend.sh host-output.sh host-images.sh host-shapes.sh host-init.sh controller-hosts.sh controller-config.sh backend-recovery.sh host-libvirt-backend.sh; do
+for t in $all; do
+	case " ${SKIP:-} " in *" $t "*) echo "-- $t skipped (SKIP)"; continue ;; esac
 	[ -f "$t" ] && tests+=("$t")
 done
 ver=$("$B" -c 'echo $BASH_VERSION')
