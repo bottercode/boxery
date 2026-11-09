@@ -55,7 +55,7 @@ test("CLI without a controlling TTY refuses, including y on stdin and inherited 
 	for (const input of ["", "y\n", "yes\nyes\n"]) {
 		const r = await headless(["grant", "demo", "ssh-agent"], input, { GRANT_CONFIRM: "off", BOXERY_ASSUME_YES: "1" });
 		assert.notEqual(r.code, 0);
-		assert.match(r.output, /grants need a person[\s\S]*vm_grant[\s\S]*boxery --host local grant demo ssh-agent/);
+		assert.match(r.output, /grants need a person[\s\S]*vm_grant[\s\S]*boxery --host local access grant demo ssh-agent/);
 		assert.equal(existsSync(store), false);
 	}
 });
@@ -231,7 +231,7 @@ test("text ls is drawn from ls --json: grants, pool leases and outdated guests i
 	assert.match(r.stdout, /^pool1 +shut off +- +- +- +headless +pool free; outdated guest \(layers changed\)$/m);
 	assert.match(r.stdout, /^pool2 +running .* leased by ben@mac, 2h left$/m);
 	assert.match(r.stderr, /guest software not checked yet: pool2 \(ls --refresh reads it\)/);
-	assert.match(r.stderr, /outdated guest software on pool1; update with: boxery patch NAME\|--all/);
+	assert.match(r.stderr, /outdated guest software on pool1; update with: boxery patch NAME \(or boxery patch --all\)/);
 	const running = await headless(["ls", "--running"]);
 	assert.equal(running.code, 0, running.output);
 	assert.doesNotMatch(running.stdout, /pool1/);

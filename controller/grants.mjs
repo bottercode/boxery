@@ -6,9 +6,9 @@ import { closeSync, openSync, readFileSync, readSync, writeSync } from "node:fs"
 import path from "node:path";
 import { formatGrants, hostBackend, vmGrants } from "../core/boxery-core.mjs";
 import { parseGrantArgs } from "../core/grant-approval.mjs";
-import { addGrants, applyGrants, grantCommand, grantPrompt, listGrants, revokeGrants, storedSpecs } from "../core/grants.mjs";
+import { addGrants, applyGrants, grantArgs, grantPrompt, listGrants, revokeGrants, storedSpecs } from "../core/grants.mjs";
 import { reapplyPushed } from "../core/grant-operations.mjs";
-import { CliError, VALID_VM, die, needHost, needVm, note, say, usage, warn } from "./lib.mjs";
+import { CliError, VALID_VM, die, hint, needHost, needVm, note, say, usage, warn } from "./lib.mjs";
 import { blockedOnPerson } from "./status.mjs";
 /** @import { GrantSpec } from "../core/boxery-core.mjs" */
 /** @import { Selected } from "./lib.mjs" */
@@ -42,7 +42,7 @@ function ask(s, vm, specs) {
 	if (unattended(s)) return;
 	let tty;
 	try { tty = openSync("/dev/tty", "r+"); }
-	catch { die(`grants need a person. Ask the user to run the command below, or use vm_grant:\n${specs.map((g) => grantCommand("grant", vm, s.host.name, g)).join("\n")}`); }
+	catch { die(`grants need a person. Ask the user to run the command below, or use vm_grant:\n${specs.map((g) => hint("access grant", grantArgs("grant", vm, g), { host: s.host.name })).join("\n")}`); }
 	let answer = "";
 	// Blocked on the person: the terminal's status says so, and Ctrl-C ends the command here (controller/status.mjs).
 	blockedOnPerson("permission", () => {

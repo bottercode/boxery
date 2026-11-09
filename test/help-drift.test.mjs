@@ -29,10 +29,10 @@ const PARSED_IN = {
 };
 // Flags in a handler that aren't its own options: arguments it gives ssh, gh or the VM helper.
 const NOT_OPTIONS = {
-	ssh: ["-t"], attach: ["-t"], forward: ["-o"],
+	ssh: ["-t"], attach: ["-t", "--bg"], forward: ["-o"], // --bg belongs to the suggested run command
 	jobs: ["--text"], kill: ["--text"],
 	runners: ["-c", "--hostname", "--jq", "--input"], // gh api
-	run: ["-h", "--help"], // its own --help, handled before NAME
+	run: ["-h", "--help", "-f", "-c"], // help before NAME; -f/-c belong to suggested logs/shell commands
 };
 // Commands whose flags the host parses (passed through): their help is checked against the host's usage text.
 const HOST_PARSED = { patch: "patch", "upgrade-host": "upgrade", backends: "backends", capabilities: "capabilities", snaps: "snaps", images: "images", pool: "pool", runners: "runners" };

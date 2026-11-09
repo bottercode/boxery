@@ -212,6 +212,22 @@ export function resolve(table, name) {
 	return e.alias ? (Object.hasOwn(table, e.alias) ? e.alias : null) : name;
 }
 
+/** One shell word, safe to copy literally, including empty strings and embedded quotes. @param {string} value */
+export const shellWord = (value) => /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+
+/** A validated command reference, not a rewrite of output. Callers choose the action explicitly: grants serves
+ *  both access ls and access apply. PREFIX is argv (e.g. --host NAME), never an executable shell fragment.
+ *  @param {Cli} cli @param {Record<string, HelpEntry>} table @param {string} command
+ *  @param {string[]} [args] @param {string[]} [prefix] */
+export function commandRef(cli, table, command, args = [], prefix = []) {
+	const words = command.split(" "), name = resolve(table, words[0]);
+	if (!name || words.length > 2 || words.some((w) => !w)) throw new Error(`unknown command reference: ${command}`);
+	const e = table[name];
+	if (words.length === 2 && (!e.actions || !Object.hasOwn(e.actions, words[1]))) throw new Error(`unknown command reference: ${command}`);
+	if (cli.hidden?.includes(e.help?.group ?? "")) throw new Error(`use a canonical family action instead of ${command}`);
+	return [cli.program, ...prefix, name, ...words.slice(1), ...args].map(shellWord).join(" ");
+}
+
 /** The name nearest WORD, when one is close. @param {string} word @param {string[]} names */
 function nearest(word, names) {
 	return names.map((n) => /** @type {const} */ ([n, distance(word, n)])).filter(([n, d]) => d <= Math.max(1, Math.floor(n.length / 3)) || (word.length >= 3 && n.startsWith(word))).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0];

@@ -12,7 +12,7 @@ import { refreshSshConfig } from "../core/profile.mjs";
 import { literal, literalArgs, remotePath } from "../core/ssh-config.mjs";
 import { controllerVersion, hostVersion, skewNote, upgradeHint } from "../core/versions.mjs";
 import { backendCommand, hostCommand, setupNamed } from "./hosts.mjs";
-import { BOXERY, CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, invokedAs, usage, hasRawBytes, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
+import { CliError, USAGE, VALID_SNAP, VALID_VM, commandLine, die, invokedAs, usage, hasRawBytes, hint, hostFailed, hostPass, inherit, needHost, needVm, note, rawTail, say, select, vmSsh, vmSshCapture, warn } from "./lib.mjs";
 import { reporting } from "./status.mjs";
 import { actionHelp, registerCommands, renderCommand, renderFamily, renderTop, resolve, routedThrough, unknownAction, unknownCommand } from "./usage.mjs";
 /** @import { Selected } from "./lib.mjs" */
@@ -104,19 +104,19 @@ async function cmdRun(s, args) {
 	/** @type {Buffer} */
 	let cwdRaw = Buffer.alloc(0);
 	for (; i < args.length; i++) {
-		if (args[i] === "--cwd") { if (!args[i + 1]) runUsage(); cwd = args[++i]; cwdRaw = raw[i]; }
+		if (args[i] === "--cwd") { if (!args[i + 1]) runUsage(name); cwd = args[++i]; cwdRaw = raw[i]; }
 		else if (args[i] === "--bg") bg = true;
 		else if (args[i] === "--") { i++; break; }
 		else break;
 	}
 	const argv = args.slice(i), argvRaw = raw.slice(i);
-	if (!argv.length) runUsage();
+	if (!argv.length) runUsage(name);
 	if (bg) {
 		await (await grants()).reapplyQuiet(s, name);
 		const { startJob } = await import("./jobs.mjs");
 		const id = await startJob(s, name, argvRaw, cwd ? cwdRaw : null);
 		say(id);
-		note(`boxery: started ${id} on ${name}   logs: ${BOXERY} logs ${name} ${id} -f   wait: ${BOXERY} wait ${name} ${id}`);
+		note(`boxery: started ${id} on ${name}   logs: ${hint("job logs", [name, id, "-f"])}   wait: ${hint("job wait", [name, id])}`);
 		literalNote(name, argv);
 		return;
 	}
@@ -128,7 +128,7 @@ async function cmdRun(s, args) {
 	if (hasRawBytes([...argvRaw, cwdRaw])) line = `eval "$(printf %s ${rawLine(argvRaw, cwd ? cwdRaw : null).toString("base64")} | base64 -d)"`;
 	const rc = await vmSsh(s, [`${name}.boxery`, line]);
 	// The usual mistake is a whole command line in one argument; say how to run it instead.
-	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: ${BOXERY} run ${name} bash -c ${literal(argv[0])}`);
+	if (rc === 127 && /\s/.test(argv[0])) warn(`hint: run takes the command and its arguments separately; for a shell line use: ${hint("run", [name, "bash", "-c", argv[0]])}`);
 	literalNote(name, argv);
 	if (rc) throw new CliError("", rc);
 }
@@ -146,8 +146,8 @@ export function runsInBackground(args) {
 	return false;
 }
 
-/** @returns {never} */
-const runUsage = () => usage("run", { hint: "a shell line: ... bash -c 'A | B'; see: boxery run --help" });
+/** @param {string} name @returns {never} */
+const runUsage = (name) => usage("run", { hint: `a shell line: ${hint("run", [name, "bash", "-c", "A | B"])}; see: ${hint("help", ["run"])}` });
 
 /** run's remote command line as bytes, for arguments that aren't UTF-8: the same line, built from bytes.
  *  @param {Buffer[]} argv @param {Buffer | null} cwd */
@@ -168,7 +168,7 @@ function rawLine(argv, cwd) {
 function literalNote(name, argv) {
 	if (["bash", "sh", "dash", "zsh", "awk", "gawk", "mawk", "perl", "jq", "sed", "python", "python3", "node", "ruby"].includes(path.basename(argv[0]))) return;
 	const a = argv.find((x) => x === "~" || x.startsWith("~/") || /\$[A-Z]/.test(x) || x.includes("${"));
-	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: ${BOXERY} run ${name} bash -c '…'`);
+	if (a !== undefined) warn(`note: ${literal(a)} was passed literally (run does not expand ~ or $VAR); to expand it in the VM: ${hint("run", [name, "bash", "-c", "…"])}`);
 }
 
 /** attach NAME [pi|opencode|shell] [session] @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -178,7 +178,7 @@ async function cmdAttach(s, [name = "", tool = "pi", sess = tool]) {
 	if (!Object.hasOwn(run, tool)) die(`unknown agent: ${tool} (pi, opencode or shell)`, 2);
 	if (!/^[A-Za-z0-9._-]+$/.test(sess)) die(`invalid session name: ${sess}`);
 	// (Without one, tmux says only "open terminal failed: not a terminal".)
-	if (contractOf("attach").terminal === "stdin" && !process.stdin.isTTY) die(`attach needs a terminal; for headless work use ${BOXERY} prompt ${name} "TASK" or ${BOXERY} run --bg ${name} CMD`);
+	if (contractOf("attach").terminal === "stdin" && !process.stdin.isTTY) die(`attach needs a terminal; for headless work use ${hint("prompt", [name])} "TASK" or ${hint("run", ["--bg", name])} CMD`);
 	await (await grants()).reapplyQuiet(s, name);
 	// tmux keeps the agent alive when you disconnect (laptop sleep, network change).
 	const rc = await vmSsh(s, ["-t", `${name}.boxery`, `cd ~/project 2>/dev/null; tmux has-session -t '${sess}' 2>/dev/null || tmux new-session -d -s '${sess}' -c ~/project "bash -lc '${run[tool]}; exec bash -l'"; exec tmux attach -t '${sess}'`]);
@@ -238,7 +238,7 @@ async function cmdPrompt(s, [name = "", ...words]) {
 		printf '%s\\n' '#!/bin/bash -l' 'cd ~/project' 'pi -p "$(cat .boxery/${id}.prompt)" </dev/null 2>&1 | tee .boxery/${id}.log' 'echo "[boxery] task finished (exit \${PIPESTATUS[0]})" | tee -a .boxery/${id}.log' 'exec bash -l' > $d/${id}.sh
 		chmod +x $d/${id}.sh; tmux new-session -d -s ${id} -c ~/project $d/${id}.sh`;
 	await exitWith(vmSsh(s, [`${name}.boxery`, script]));
-	say(`started ${id} on ${name} — watch: ${BOXERY} attach ${name} pi ${id}   log: ${BOXERY} run ${name} cat .boxery/${id}.log`);
+	say(`started ${id} on ${name} — watch: ${hint("attach", [name, "pi", id])}   log: ${hint("run", [name, "cat", `.boxery/${id}.log`])}`);
 }
 
 /** A VM has no LLM access until it is granted, and pi without it fails at once: say so before starting a
@@ -251,7 +251,7 @@ async function needPiGrant(s, name) {
 	if (r.code) throw new CliError("", r.code); // (ssh said why)
 	const [settings, projectSettings, models] = r.stdout.split("\x1e").slice(-3);
 	const spec = (await import("../core/grants.mjs")).missingPiGrant(name, { settings, projectSettings, models });
-	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: ${BOXERY} grant ${name} ${spec}`);
+	if (spec) die(`pi in ${name} needs ${spec}, which ${name} has not been granted; grant it first: ${hint("access grant", [name, spec])}`);
 }
 
 /** cp FROM TO: vm_copy's own code. Needs only the profile's ssh_config, not the host. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
@@ -343,7 +343,7 @@ export const COMMANDS = {
 			details: ["OpenShell has its own options (gateway, image, policy, providers): boxery setup local --backend openshell --help."],
 			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: ~/.ssh/id_ed25519.pub, id_ecdsa.pub or id_rsa.pub; else the key your registered hosts use; else another ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery host backends lists them)"]],
 			examples: [["A Linux box you reach over ssh", "boxery setup you@my-host"], ["This machine", "boxery setup local"]],
-			seeAlso: ["host", "build-base", "backends"], docs: "install.md",
+			seeAlso: ["host", "host build-base", "host backends"], docs: "install.md",
 		},
 	},
 	host: {
@@ -398,7 +398,7 @@ export const COMMANDS = {
 	new: {
 		help: {
 			group: "vms", summary: "create a VM", usage: ["new NAME [--shape S] [--cpus N --mem MiB --disk GiB] [--headless [--layers L,...]] [--grant SPEC]... [--agent-forward]", "new NAME --from VM@SNAP"],
-			flags: [...SIZE_FLAGS, ["--headless", "No desktop (shell and agents only); needs no build-base"], ["--layers L,...", "Extra image layers for a headless VM (github-runner)"], ["--from VM@SNAP", "Start from a snapshot (boxery snapshot images lists them)"], ["--grant SPEC", "Grant access at creation (asks first; see boxery grant)"], ["--agent-forward", "Same as --grant ssh-agent"]],
+			flags: [...SIZE_FLAGS, ["--headless", "No desktop (shell and agents only); needs no build-base"], ["--layers L,...", "Extra image layers for a headless VM (github-runner)"], ["--from VM@SNAP", "Start from a snapshot (boxery snapshot images lists them)"], ["--grant SPEC", "Grant access at creation (asks first; see boxery access grant)"], ["--agent-forward", "Same as --grant ssh-agent"]],
 			examples: [["A desktop VM", "boxery new demo"], ["A larger, headless one", "boxery new ci-1 --headless --shape large"], ["A GitHub Actions runner VM", "boxery new runner-1 --headless --layers github-runner"]],
 			seeAlso: ["shapes", "fork", "rm"], docs: "cli.md#lifecycle",
 		},
@@ -445,7 +445,7 @@ export const COMMANDS = {
 			group: "vms", summary: "copy a VM (running or not) into new VMs, ~10 s", usage: ["fork SRC DST... [--grants] [--shape S] [--cpus N --mem MiB --disk GiB]"],
 			details: ["Each fork has SRC's disk (not its processes) with its own hostname, LLM token, ssh keys and network identity, and SRC's size unless --shape or size flags say otherwise.", CAPTURE_NOTE],
 			flags: [["--grants", "Give the forks SRC's grants too (asks for each)"], ...SIZE_FLAGS],
-			examples: [["Two copies to try two approaches", "boxery fork demo try-a try-b"]], seeAlso: ["snap", "new"], docs: "cli.md#snapshots-and-forks",
+			examples: [["Two copies to try two approaches", "boxery fork demo try-a try-b"]], seeAlso: ["snapshot create", "new"], docs: "cli.md#snapshots-and-forks",
 		},
 		status: { vm: true },
 		run: async (s, args) => { needHost(s); await cmdFork(s, args); },
@@ -480,7 +480,7 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ snapshots
 	snap: {
-		help: { group: "legacy", summary: "snapshot a VM's disk (Lima restarts a running VM)", usage: ["snap NAME [SNAP]"], details: [CAPTURE_NOTE], seeAlso: ["snaps", "revert", "snap-rm"], docs: "cli.md#snapshots-and-forks" },
+		help: { group: "legacy", summary: "snapshot a VM's disk (Lima restarts a running VM)", usage: ["snap NAME [SNAP]"], details: [CAPTURE_NOTE], seeAlso: ["snapshot ls", "snapshot restore", "snapshot rm"], docs: "cli.md#snapshots-and-forks" },
 		status: { vm: true },
 		run: async (s, args) => {
 			needHost(s);
@@ -538,7 +538,7 @@ export const COMMANDS = {
 			details: [RUN_RULES, "The exit code is the command's. A relative --cwd is under ~/project; ~/ expands in the VM; absolute paths are used as is."],
 			flags: [["--bg", "Run as a background job; prints the job id (see boxery job ls)"], ["--cwd DIR", "Working directory"], ["--", "End run's options"]],
 			examples: [["Args are passed as-is: quotes, $, *, ; stay literal", "boxery run demo pnpm test"], ["In ~/project/modem", "boxery run demo --cwd modem git log -1"], ["Pipes, ~, $VAR and globs need bash -c", "boxery run demo bash -c 'ls ~ | wc -l; echo $HOME'"], ["Not this: one argument is one command name (fails with a hint)", "boxery run demo 'make test'"]],
-			seeAlso: ["jobs", "ssh"], docs: "cli.md#shell-and-in-vm-agents",
+			seeAlso: ["job ls", "ssh"], docs: "cli.md#shell-and-in-vm-agents",
 		},
 		status: { vm: true, when: (a) => !runsInBackground(a) }, // --bg returns at once
 		run: async (s, args) => { needHost(s); await cmdRun(s, args); },
@@ -565,7 +565,7 @@ export const COMMANDS = {
 	attach: {
 		help: {
 			group: "use", summary: "attach to an agent in a persistent tmux session", list: "attach NAME [AGENT]", usage: ["attach NAME [pi|opencode|shell] [SESSION]"],
-			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect. It needs a terminal; for headless work use prompt or run --bg."], seeAlso: ["sessions", "prompt"],
+			details: ["The session keeps running when you detach (Ctrl-b d) or disconnect. It needs a terminal; for headless work use prompt or run --bg."], seeAlso: ["agent ls", "prompt"],
 		},
 		run: async (s, args) => { needHost(s); await cmdAttach(s, args); },
 		contract: { terminal: "stdin", payload: "agent" },
@@ -596,7 +596,7 @@ export const COMMANDS = {
 			group: "legacy", summary: "list background jobs (run --bg starts one)", usage: ["jobs NAME [--json]", "jobs NAME --prune [--older-than 7d] [--json]"],
 			details: ["States: running, exited, or lost (it stopped without recording an exit code). exited+ means it left processes running."],
 			flags: [JSON_FLAG, ["--prune", "Delete finished jobs and their logs"], ["--older-than D", "With --prune: only jobs older than D (e.g. 7d)"]],
-			seeAlso: ["run", "logs", "wait", "kill"], docs: "cli.md#background-command-jobs",
+			seeAlso: ["run", "job logs", "job wait", "job kill"], docs: "cli.md#background-command-jobs",
 		},
 		run: async (s, args) => { needHost(s); await (await import("./jobs.mjs")).jobs(s, args); },
 	},
@@ -643,7 +643,7 @@ export const COMMANDS = {
 			details: ["SPEC is one of:\n  llm:chatgpt|openai|anthropic|ollama   LLM access (VMs have none without it)\n  github [--readonly]                   GitHub over HTTPS; the token stays here\n  http:HOST --cmd CMD [--auth bearer|basic:USER|header:NAME] [--readonly]\n                                        an HTTP API; the secret never enters the VM\n  ssh-agent                             forward your ssh agent\n  env:VAR [--cmd CMD]                   push an environment variable\n  file:LOCAL[=REMOTE]                   push a file", "Adding access prompts on your terminal and defaults to No."],
 			flags: [["--cmd CMD", "env: and http: grants: the command on this machine that prints the secret"], ["--auth A", "http: grants: bearer (default), basic:USER or header:NAME"], ["--readonly", "http: and github grants: GET/HEAD and git fetch only"]],
 			examples: [["Let the VM use your Anthropic subscription", "boxery grant demo llm:anthropic"], ["Read-only GitHub", "boxery grant demo github --readonly"]],
-			seeAlso: ["revoke", "grants"], docs: "grants.md",
+			seeAlso: ["access revoke", "access ls", "access apply"], docs: "grants.md",
 		},
 		run: async (s, args) => { needHost(s); await (await grants()).grant(s, args); },
 		contract: { terminal: "approval" },
@@ -695,7 +695,7 @@ export const COMMANDS = {
 		help: {
 			group: "legacy", summary: "lease a VM from the shared pool (prints NAME LEASE_ID)", usage: ["acquire [--ttl S] [--wait S] [--holder H]"],
 			flags: [["--ttl S", "Lease length in seconds (default 1800)"], ["--wait S", "Wait up to S seconds for a free VM"], ["--holder H", "Who holds the lease, as the host shows it (default: user@machine)"]],
-			seeAlso: ["renew", "release", "leases"], docs: "pool.md",
+			seeAlso: ["lease renew", "lease release", "lease ls"], docs: "pool.md",
 		},
 		status: { when: (a) => a.some((w, i) => w === "--wait" && Number(a[i + 1]) > 0) }, // only waiting for a free VM takes a while
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "acquire", args); },
@@ -745,7 +745,7 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ host & diagnostics
 	version: {
-		help: { group: "more", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["upgrade-host"] },
+		help: { group: "more", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["host upgrade"] },
 		run: async (s, args) => cmdVersion(s, args),
 		local: (args) => cmdVersion(null, args),
 		contract: { hostOptional: true },

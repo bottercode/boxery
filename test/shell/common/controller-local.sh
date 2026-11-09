@@ -129,7 +129,7 @@ mkdir -p "$tmp/vms/w1/home/.pi/agent"; printf '{"defaultProvider": "openai-codex
 printf '{"providers": {"openai-codex": {"baseUrl": "http://127.0.0.1:8088/chatgpt/backend-api"}}}\n' >"$tmp/vms/w1/home/.pi/agent/models.json"
 printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/tmux"
 if out=$("$A" prompt w1 say hi 2>&1); then bad "prompt without an llm grant started: $out"
-elif [[ $out == *"needs llm:chatgpt"*"boxery grant w1 llm:chatgpt"* ]] && ! ls "$tmp/vms/w1/home/project/.boxery/"task-* >/dev/null 2>&1; then ok "prompt without pi's llm grant: refused, with the grant to run"
+elif [[ $out == *"needs llm:chatgpt"*"boxery access grant w1 llm:chatgpt"* ]] && ! ls "$tmp/vms/w1/home/project/.boxery/"task-* >/dev/null 2>&1; then ok "prompt without pi's llm grant: refused, with the grant to run"
 else bad "prompt without a grant: $out"; fi
 # (a login script that prints something first doesn't hide pi's settings)
 echo "welcome to the VM" >"$tmp/vms/w1/login-output"
