@@ -172,6 +172,8 @@ async function acquire(db, wanted, command, env, conf, reconcile = false) {
 		if (result.recovery) { await recover(db, result.recovery, conf); continue; }
 		if (result.done) return null;
 		if (result.operation) return result.operation;
+		// Tests only: waiting leaves no trace in the store, so say which locks this process is queued for.
+		if (process.env.BOXERY_TEST_LOCK_WAIT) writeFileSync(process.env.BOXERY_TEST_LOCK_WAIT, `${command} ${wanted.join(" ")}\n`);
 		await sleep(50);
 	}
 }
