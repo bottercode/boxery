@@ -302,7 +302,7 @@ export const COMMANDS = {
 			group: "start", summary: "configure a VM host (local = this machine), register your ssh key",
 			usage: ["setup user@host|local [--name NAME] [--key K.pub] [--host-bin PATH] [--profile P [--backend B]]", "setup local --backend openshell [OPTIONS]"],
 			details: ["OpenShell has its own options (gateway, image, policy, providers): boxery setup local --backend openshell --help."],
-			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: your first ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery host backends lists them)"]],
+			flags: [["--name NAME", "Register the host as NAME (default: local, or the host part of user@host)"], ["--key K.pub", "The ssh public key VMs trust (default: ~/.ssh/id_ed25519.pub, id_ecdsa.pub or id_rsa.pub; else the key your registered hosts use; else another ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"], ["--profile P", "Use (or create, with --backend) profile P on the host"], ["--backend B", "The backend for a new profile (boxery host backends lists them)"]],
 			examples: [["A Linux box you reach over ssh", "boxery setup you@my-host"], ["This machine", "boxery setup local"]],
 			seeAlso: ["host", "build-base", "backends"], docs: "install.md",
 		},
@@ -319,7 +319,7 @@ export const COMMANDS = {
 			add: {
 				help: {
 					summary: "register DEST (user@host or local) as NAME", usage: ["host add NAME DEST [--key K.pub] [--host-bin PATH] [--backend B | --profile P]", "host add NAME --config-dir DIR"],
-					flags: [["--backend B", "Create a new profile on DEST for backend B (own state, proxy port and services)"], ["--profile P", "Use an existing profile on DEST"], ["--config-dir DIR", "Import an existing profile directory without setup"], ["--key K.pub", "The ssh public key VMs trust"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"]],
+					flags: [["--backend B", "Create a new profile on DEST for backend B (own state, proxy port and services)"], ["--profile P", "Use an existing profile on DEST"], ["--config-dir DIR", "Import an existing profile directory without setup"], ["--key K.pub", "The ssh public key VMs trust (default: ~/.ssh/id_ed25519.pub, id_ecdsa.pub or id_rsa.pub; else the key your registered hosts use; else another ~/.ssh/id_*.pub)"], ["--host-bin PATH", "boxery-host on the host, when it isn't on its PATH"]],
 					examples: [["A machine you reach over ssh", "boxery host add hornet you@hornet"], ["A second backend on this machine", "boxery host add exe local --backend exe"]], docs: "hosts.md",
 				},
 			},

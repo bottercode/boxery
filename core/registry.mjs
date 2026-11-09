@@ -7,7 +7,7 @@
 // checks pass through, and may ask); a tool's captures everything as text and never shares stdio (MCP's
 // stdout is its protocol), so nothing asks.
 import { spawn } from "node:child_process";
-import { accessSync, closeSync, existsSync, constants as fsConstants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants as fsConstants, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { constants, homedir } from "node:os";
 import path from "node:path";
 import { BOXERY_HOME, defaultHost, resolveHost } from "./boxery-core.mjs";
@@ -121,27 +121,33 @@ export async function setup(host, config, dest, { key = "", hostBin = config.hos
 	}
 	/** @param {string[]} a @param {HostRunOpts} [o] */
 	const h = (a, o = {}) => hostRun(a, { host: hp, config: c, timeout: io.terminal ? 0 : 600_000, ...o });
+	if (!backend && hostProfile) await h(["help"], { stderr: io.terminal ? "inherit" : "pipe" }).catch(() => fail(`cannot use host profile ${hostProfile} on ${dest}`));
+	// The key VMs will trust, found before the slower init and capability checks. (A new profile's backend is
+	// the one asked for; an existing one says. OpenShell's gateway authenticates instead.)
+	const authBackend = backend || await h(["backend"]).catch(() => "");
+	const home = env.HOME ?? homedir();
+	let pub = "";
+	if (authBackend !== "openshell") {
+		pub = key || await defaultKey(home, config.identity);
+		let isFile = false;
+		try { isFile = statSync(pub).isFile(); } catch { /* missing */ }
+		if (!isFile) fail(key ? `no such ssh public key: ${key}` : `no ssh public key found: tried ~/.ssh/id_ed25519.pub, id_ecdsa.pub and id_rsa.pub, the keys your registered hosts use, and other ~/.ssh/id_*.pub with their private key. Pass --key PATH.pub, or make one: ssh-keygen -t ed25519`);
+		// (Not one of the usual names: say which, since VMs will see it.)
+		if (!key && !USUAL_KEYS.some((k) => pub === path.join(home, ".ssh", k))) io.say(`==> no --key given: using ${pub} (pass --key to choose another)`);
+	}
 	if (backend) {
 		io.say(`==> creating host profile ${hostProfile} (${backend} backend; its own state, proxy port and services)`);
 		await hostSays(io, ["init", "--backend", backend], hp, c)
 			.catch(() => fail(`boxery-host --profile ${hostProfile} init --backend ${backend} failed on ${dest} (see above); fix it and re-run, init is safe to repeat`));
-	} else if (hostProfile) {
-		await h(["help"], { stderr: io.terminal ? "inherit" : "pipe" }).catch(() => fail(`cannot use host profile ${hostProfile} on ${dest}`));
 	}
 	// Check boxery-host, not the controller; old hosts remain registrable with a warning.
 	const help = await h(["help"], { raw: true }).catch((e) => String(e?.stdout ?? ""));
 	if (help.includes("capabilities")) {
 		await hostSays(io, ["capabilities", "--check"], hp, c).catch(() => fail("host backend requirements not met (see above); fix them before setup"));
 	} else io.note("==> warning: host predates capability checks; upgrade it for backend preflight");
-	const authBackend = await h(["backend"]).catch(() => "");
 	let identity = "";
 	if (authBackend === "openshell") io.say("==> OpenShell gateway authenticates access; no guest SSH key registration needed");
 	else {
-		const home = env.HOME ?? homedir();
-		const pub = key || (["id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"].map((k) => path.join(home, ".ssh", k)).find((k) => existsSync(k)) ?? "");
-		let isFile = false;
-		try { isFile = statSync(pub).isFile(); } catch { /* missing */ }
-		if (!isFile) fail("no ssh public key found; pass --key");
 		identity = plainPath(pub.replace(/\.pub$/, ""));
 		io.say(`==> registering ${pub} with host (applies to VMs created from now on)`);
 		// (A failure the host has already explained, in the terminal, ends with its exit status and no more words.)
@@ -173,6 +179,40 @@ export async function setup(host, config, dest, { key = "", hostBin = config.hos
 	if (b === "openshell") io.say(`==> done. Try: boxery --host ${host.name} new demo --headless (no desktop or build-base)`);
 	else if (backend) io.say(`==> done. Headless VMs work now; desktop VMs need the base image once (~3 min): ${host.name === checkedDefault() ? "boxery build-base" : `boxery --host ${host.name} build-base`}`);
 	else io.say("==> done. Try: boxery new demo");
+}
+
+const USUAL_KEYS = ["id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"];
+/**
+ * The public key setup registers when no --key is given, or "". Re-running setup keeps the host's own key
+ * (PREVIOUS, its IDENTITY), which its VMs trust; else ~/.ssh/id_ed25519.pub, id_ecdsa.pub or id_rsa.pub;
+ * else the key a registered host already uses (the default host's first), which works with boxery already;
+ * else the first other ~/.ssh/id_*.pub. Past the usual names, a key counts only next to its private half (a
+ * stray public key may be someone else's), and not certificates (-cert.pub) or DSA keys (sshd refuses them).
+ * @param {string} home @param {string} [previous] @returns {Promise<string>}
+ */
+export async function defaultKey(home, previous = "") {
+	const isFile = (/** @type {string} */ p) => { try { return statSync(p).isFile(); } catch { return false; } };
+	// An IDENTITY as ssh_config reads it (~/ is this machine's home) → its public key, if both halves are there.
+	const held = (/** @type {string} */ identity) => {
+		const file = identity === "~" ? home : identity.startsWith("~/") ? path.join(home, identity.slice(2)) : identity;
+		return path.isAbsolute(file) && isFile(file) && isFile(`${file}.pub`) ? `${file}.pub` : "";
+	};
+	if (previous && held(previous)) return held(previous);
+	const ssh = path.join(home, ".ssh");
+	const usual = USUAL_KEYS.map((k) => path.join(ssh, k)).find(isFile);
+	if (usual) return usual;
+	let def = null;
+	try { def = defaultHost(); } catch { /* a malformed default: still look at the others */ }
+	let names = /** @type {string[]} */ ([]);
+	try { names = readdirSync(REGISTRY).filter((n) => VALID_ALIAS.test(n)).sort((a, b) => Number(b === def) - Number(a === def) || a.localeCompare(b)); } catch { /* none yet */ }
+	for (const name of names) {
+		let identity = "";
+		try { identity = (await profileConfig(resolveHost(name))).identity; } catch { continue; } // an incomplete or broken profile
+		if (identity && held(identity)) return held(identity);
+	}
+	let others = /** @type {string[]} */ ([]);
+	try { others = readdirSync(ssh).filter((f) => /^id_.+\.pub$/.test(f) && !/-cert\.pub$/.test(f) && !f.startsWith("id_dsa")).sort(); } catch { /* no ~/.ssh */ }
+	return others.map((f) => held(path.join(ssh, f.slice(0, -4)))).find(Boolean) ?? "";
 }
 
 /**
