@@ -46,9 +46,7 @@ export async function ls(s, args, how) {
 		return;
 	}
 	const sections = await Promise.all(hosts.map(async (h) => {
-		const where = [h.backend, h.destination && (h.destination === "local" ? "on this machine" : `on ${h.destination}`)].filter(Boolean).join(" ");
-		const names = [h.name === s.host.name ? "default" : "", h.also.length ? `also ${h.also.map((o) => o.name).join(", ")}` : ""].filter(Boolean).join("; ");
-		const heading = `${h.name}${names ? ` (${names})` : ""}${where ? `: ${where}` : ""}`;
+		const heading = hostHeading(h, s);
 		try {
 			const hs = h.name === s.host.name ? s : await select(h.name, h.dir);
 			if (!hs.config.host) die(`not configured; run: boxery setup user@host|local --name ${h.name}`);
@@ -62,7 +60,7 @@ export async function ls(s, args, how) {
 
 /** The hosts to list, the default first; another name registered for a host already listed (same_as) is
  *  the same host, listed once. Only the selected host when the registry can't be read. @param {Selected} s */
-function listedHosts(s) {
+export function listedHosts(s) {
 	let hosts;
 	try { hosts = describeHosts(); } catch (e) { warn(`listing ${s.host.name} only: ${/** @type {Error} */ (e).message}`); return []; }
 	/** @type {(typeof hosts[number] & { also: typeof hosts })[]} */
@@ -72,6 +70,14 @@ function listedHosts(s) {
 		if (under) under.also.push(h); else shown.push({ ...h, also: [] });
 	}
 	return shown;
+}
+
+/** The shared section heading for read-only all-host listings.
+ * @param {ReturnType<typeof listedHosts>[number]} h @param {Selected} s */
+export function hostHeading(h, s) {
+	const where = [h.backend, h.destination && (h.destination === "local" ? "on this machine" : `on ${h.destination}`)].filter(Boolean).join(" ");
+	const names = [h.name === s.host.name ? "default" : "", h.also.length ? `also ${h.also.map((o) => o.name).join(", ")}` : ""].filter(Boolean).join("; ");
+	return `${h.name}${names ? ` (${names})` : ""}${where ? `: ${where}` : ""}`;
 }
 
 /** The grants other names for a section's host gave its VMs: each name keeps its own (in its profile

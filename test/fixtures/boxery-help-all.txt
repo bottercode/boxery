@@ -47,15 +47,15 @@ boxery host — named hosts, and maintenance of the selected host:
   host upgrade                          Update boxery on the host and restart its services
   host proxy-log [N]                    Recent LLM and edge (http: grant) requests on the host
   host backend                          The host's VM backend (recorded for host ls)
-  host backends                         Backend support, requirements and capabilities
-  host capabilities                     The selected host's platform and capabilities
+  host backends                         Backend support and capabilities on every host
+  host capabilities                     Every host's platform and capabilities (--host NAME: one)
 
 boxery snapshot — saved VM disk states: create, restore, list, delete:
   snapshot create NAME [SNAP]           Snapshot a VM's disk (Lima restarts a running VM)
   snapshot ls NAME                      List a VM's snapshots
   snapshot restore NAME SNAP            Restore a VM to a snapshot (keeps its name, address and token)
   snapshot rm NAME SNAP                 Delete a snapshot
-  snapshot images                       Every snapshot on the host (new NAME --from VM@SNAP uses one)
+  snapshot images                       Snapshots on every host, with HOST column (--host NAME: one)
 
 boxery agent — persistent coding-agent sessions in a VM:
   agent attach NAME [AGENT]             Attach to an agent in a persistent tmux session
@@ -78,12 +78,12 @@ boxery lease — borrow a VM from the shared pool:
   lease acquire                         Lease a VM from the shared pool (prints NAME LEASE_ID)
   lease renew NAME                      Extend your lease
   lease release NAME                    Give a leased VM back (it is reset to its clean snapshot)
-  lease ls                              Your leases
+  lease ls                              Your leases on every host (--host NAME: one)
 
 More:
   pin NAME                              Re-pin a VM's ssh host key (VMs made before keys were pinned)
-  shapes                                VM sizes defined on the host (* = default)
-  version                               Controller and host versions; warns when the host is behind
+  shapes                                VM sizes on every host (* = default; --host NAME: one)
+  version                               Controller and every host's version; warns per host
 
 Older spellings (still work; the same commands as the family actions):
   build-base                            Build the host's desktop base image (one time, ~3 min) (= host build-base)
@@ -91,7 +91,7 @@ Older spellings (still work; the same commands as the family actions):
   snaps NAME                            List a VM's snapshots (= snapshot ls)
   revert NAME SNAP                      Restore a VM to a snapshot (keeps its name, address and token) (= snapshot restore)
   snap-rm NAME SNAP                     Delete a snapshot (= snapshot rm)
-  images                                Every snapshot on the host (new NAME --from VM@SNAP uses one) (= snapshot images)
+  images                                Snapshots on every host, with HOST column (--host NAME: one) (= snapshot images)
   sessions NAME                         List a VM's tmux sessions (= agent ls)
   jobs NAME                             List background jobs (run --bg starts one) (= job ls)
   logs NAME JOB                         Show a job's output (the last 200 lines) (= job logs)
@@ -104,10 +104,10 @@ Older spellings (still work; the same commands as the family actions):
   acquire                               Lease a VM from the shared pool (prints NAME LEASE_ID) (= lease acquire)
   renew NAME                            Extend your lease (= lease renew)
   release NAME                          Give a leased VM back (it is reset to its clean snapshot) (= lease release)
-  leases                                Your leases (= lease ls)
+  leases                                Your leases on every host (--host NAME: one) (= lease ls)
   upgrade-host                          Update boxery on the host and restart its services (= host upgrade)
-  backends                              Backend support, requirements and capabilities (= host backends)
-  capabilities                          The selected host's platform and capabilities (= host capabilities)
+  backends                              Backend support and capabilities on every host (= host backends)
+  capabilities                          Every host's platform and capabilities (--host NAME: one) (= host capabilities)
   backend                               The host's VM backend (recorded for host ls) (= host backend)
   proxy-log [N]                         Recent LLM and edge (http: grant) requests on the host (= host proxy-log)
 

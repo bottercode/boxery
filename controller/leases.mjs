@@ -27,6 +27,12 @@ function parse(a, flags) {
 	return out;
 }
 
+/** Text listing of this profile's locally held leases. */
+export function leaseText() {
+	const now = Math.floor(Date.now() / 1000), all = localLeases();
+	return all.map((r) => `${r.name.padEnd(16)} ${(r.expires > now ? `${r.expires - now}s` : "expired").padEnd(10)} ${r.id}`).join("\n") || "(no leases)";
+}
+
 /** @param {Selected} _s @param {"acquire" | "renew" | "release" | "leases"} command @param {string[]} args */
 export async function leaseCommand(_s, command, args) {
 	const abort = new AbortController();
@@ -72,9 +78,7 @@ export async function leaseCommand(_s, command, args) {
 				const rows = leaseRows().map((r) => JSON.stringify(r));
 				return say(rows.length ? `[\n${rows.join(",\n")}\n]` : "[]");
 			}
-			const now = Math.floor(Date.now() / 1000), all = localLeases();
-			if (!all.length) return say("(no leases)");
-			for (const r of all) say(`${r.name.padEnd(16)} ${(r.expires > now ? `${r.expires - now}s` : "expired").padEnd(10)} ${r.id}`);
+			return say(leaseText());
 		}
 	}
 }
