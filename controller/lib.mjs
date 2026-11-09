@@ -1,6 +1,6 @@
 // Shared plumbing for the controller CLI's commands (controller/cli.mjs): errors and exit codes, argument
 // checks, the selected host profile, and processes that share this terminal (ssh, boxery-host).
-import { usageText } from "./usage.mjs";
+import { commandRef, usageText } from "./usage.mjs";
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import { profileFromDirectory, vmProblem, withHost } from "../core/boxery-core.mjs";
@@ -28,11 +28,16 @@ export const quit = (exitCode) => { throw new CliError("", exitCode); };
  *  get (core/ssh-config.mjs remoteCommand; host/util.mjs hint). (Plain ls asks every host with `boxery`:
  *  its host output is --json, with no hints.) */
 export let BOXERY = "boxery";
+let hintHost = "";
 /** @param {string} explicitHost the NAME of --host NAME, or "" */
 export function invokedAs(explicitHost) {
+	hintHost = explicitHost;
 	BOXERY = explicitHost ? `boxery --host ${explicitHost}` : "boxery";
 	process.env.BOXERY_CLI = BOXERY;
 }
+/** A canonical hint using the caller's explicit host, or a specific host for grouped output and grant requests.
+ *  @param {string} command @param {string[]} [args] @param {{host?: string}} [options] */
+export const hint = (command, args = [], { host = hintHost } = {}) => commandRef(command, args, host ? ["--host", host] : []);
 /** @param {string} message */
 export const warn = (message) => { process.stderr.write(`boxery: ${message}\n`); };
 /** A line on stdout. @param {string} text */

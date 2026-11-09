@@ -126,9 +126,15 @@ export function missingPiGrant(vm, { settings = "", projectSettings = "", models
 	return `llm:${route}`;
 }
 
-/** @param {"grant" | "revoke"} verb @param {string} vm @param {string} host @param {GrantSpec} g */
-export function grantCommand(verb, vm, host, g) {
+/** Grant arguments shared by front-ends that choose their own command spelling.
+ *  @param {"grant" | "revoke"} verb @param {string} vm @param {GrantSpec} g */
+export function grantArgs(verb, vm, g) {
 	const spec = verb === "revoke" && g.kind === "file" ? `file:${g.local}` : g.spec;
-	return ["boxery", "--host", host, verb, vm, spec, ...(verb === "grant" ? [...(g.readonly ? ["--readonly"] : []), ...(g.cmd ? ["--cmd", g.cmd] : []), ...(g.auth ? ["--auth", g.auth] : [])] : [])].map(quoteWord).join(" ");
+	return [vm, spec, ...(verb === "grant" ? [...(g.readonly ? ["--readonly"] : []), ...(g.cmd ? ["--cmd", g.cmd] : []), ...(g.auth ? ["--auth", g.auth] : [])] : [])];
+}
+/** Shared approval messages retain their existing command format.
+ *  @param {"grant" | "revoke"} verb @param {string} vm @param {string} host @param {GrantSpec} g */
+export function grantCommand(verb, vm, host, g) {
+	return ["boxery", "--host", host, verb, ...grantArgs(verb, vm, g)].map(quoteWord).join(" ");
 }
 
