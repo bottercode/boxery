@@ -54,7 +54,7 @@ boxery --host hornet host upgrade --check   # maintenance acts on the selected h
 boxery host rm hornet                       # forget only; preserves VMs and profile data
 ```
 
-Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names registered for the same profile are listed once. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
+Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names for the same host (`same_as` in `host ls --json`) are listed once, headed `(also NAME)`, with each name's grants. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
 
 ### Backend discovery
 
@@ -633,7 +633,7 @@ Registered hosts, by name. Read from local profile files only: no host is contac
 | `default` | boolean | selected by `host use` (`default-host`; the first host registered starts as the default) |
 | `destination` | string \| null | where its VM host runs: `local` (this machine) or the ssh destination (`user@host` or an ssh-config alias). `null` when not set up |
 | `backend` | string \| null | `lima`, `libvirt`, `cloud-hypervisor`, `exe`, `boat`, … as recorded by `setup` or `boxery backend`; `null` if never recorded (an older profile: run `boxery --host NAME host backend`; or a host that predates `boxery-host backend`) |
-| `same_as` | string[] | other names whose profile is the same directory: the same host and VMs (e.g. a second name imported with `--config-dir` for an existing profile) |
+| `same_as` | string[] | other names for the same host and VMs: the same profile directory (e.g. a second name imported with `--config-dir`), or the same destination and host-side profile (e.g. a second name added with `host add NAME DEST --profile P`); see [Named hosts](hosts.md) |
 
 #### `boxery snaps NAME --json`
 

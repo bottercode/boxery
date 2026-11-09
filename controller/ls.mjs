@@ -3,7 +3,8 @@
 // every host's rows share one header and one set of column widths, and what is worth reading about a VM
 // (its pool lease, outdated guest software, grants) is one STATUS column, "-" when there's nothing to say.
 // Notes (VMs not checked yet, a host that failed) come after the table, on stderr.
-import { describeHosts, withHost } from "../core/boxery-core.mjs";
+import { realpathSync } from "node:fs";
+import { describeHosts, listGrants, withHost } from "../core/boxery-core.mjs";
 import * as lifecycle from "../core/lifecycle.mjs";
 import { BOXERY, die, hostFailed, needHost, note, quit, say, select, usage, warn } from "./lib.mjs";
 /** @import { Selected } from "./lib.mjs" */
@@ -11,7 +12,9 @@ import { BOXERY, die, hostFailed, needHost, note, quit, say, select, usage, warn
 /** A row of listVms, as docs/cli.md describes `ls --json`.
  * @typedef {{ name: string, state?: string | null, ssh_addr?: string | null, tunnel?: string | null, disk_size?: number | null,
  *   disk_used?: number | null, shape?: string | null, desktop?: boolean, lease?: { state: string, holder?: string | null, expires_at?: number | null } | null,
- *   guest?: { status?: string, reasons?: string[], checked_at?: number | null }, grants: ReturnType<typeof import("../core/grant-operations.mjs").listGrants> }} Vm */
+ *   guest?: { status?: string, reasons?: string[], checked_at?: number | null }, grants: ReturnType<typeof import("../core/grant-operations.mjs").listGrants>,
+ *   via?: { name: string, grants: ReturnType<typeof import("../core/grant-operations.mjs").listGrants> }[] }} Vm
+ *   (via: grants given under another name for the same host, which ls doesn't list separately) */
 /** One host's listing, or why there is none. @typedef {{ name: string, heading: string, vms: Vm[], notes: string, error: Error | null }} Section */
 
 const COLUMNS = ["NAME", "STATE", "SSH", "DISK", "SHAPE", "KIND", "STATUS"];
@@ -38,16 +41,20 @@ export async function ls(s, args, how) {
 		needHost(s);
 		const section = await list(s, s.host.name, "", refresh);
 		if (section.error) hostFailed(section.error);
+		addGrantsOf(section, s.host.dir, hosts[0]?.also ?? []);
 		print([section], { onlyRunning, refresh, grouped: false });
 		return;
 	}
 	const sections = await Promise.all(hosts.map(async (h) => {
 		const where = [h.backend, h.destination && (h.destination === "local" ? "on this machine" : `on ${h.destination}`)].filter(Boolean).join(" ");
-		const heading = `${h.name}${h.name === s.host.name ? " (default)" : ""}${where ? `: ${where}` : ""}`;
+		const names = [h.name === s.host.name ? "default" : "", h.also.length ? `also ${h.also.map((o) => o.name).join(", ")}` : ""].filter(Boolean).join("; ");
+		const heading = `${h.name}${names ? ` (${names})` : ""}${where ? `: ${where}` : ""}`;
 		try {
 			const hs = h.name === s.host.name ? s : await select(h.name, h.dir);
 			if (!hs.config.host) die(`not configured; run: boxery setup user@host|local --name ${h.name}`);
-			return await list(hs, h.name, heading, refresh);
+			const sec = await list(hs, h.name, heading, refresh);
+			addGrantsOf(sec, h.dir, h.also);
+			return sec;
 		} catch (e) { return { name: h.name, heading, vms: [], notes: "", error: /** @type {Error} */ (e) }; }
 	}));
 	if (print(sections, { onlyRunning, refresh, grouped: true })) quit(1);
@@ -58,12 +65,26 @@ export async function ls(s, args, how) {
 function listedHosts(s) {
 	let hosts;
 	try { hosts = describeHosts(); } catch (e) { warn(`listing ${s.host.name} only: ${/** @type {Error} */ (e).message}`); return []; }
-	/** @type {typeof hosts} */
+	/** @type {(typeof hosts[number] & { also: typeof hosts })[]} */
 	const shown = [];
 	for (const h of [...hosts.filter((h) => h.name === s.host.name), ...hosts.filter((h) => h.name !== s.host.name)]) {
-		if (!h.same_as.some((n) => shown.some((o) => o.name === n))) shown.push(h);
+		const under = shown.find((o) => h.same_as.includes(o.name));
+		if (under) under.also.push(h); else shown.push({ ...h, also: [] });
 	}
 	return shown;
+}
+
+/** The grants other names for a section's host gave its VMs: each name keeps its own (in its profile
+ *  directory), and only one name is listed. @param {Section} sec @param {string} dir @param {import("../core/boxery-core.mjs").HostDescription[]} also */
+function addGrantsOf(sec, dir, also) {
+	const real = (/** @type {string} */ d) => { try { return realpathSync(d); } catch { return d; } };
+	for (const o of also.filter((o) => real(o.dir) !== real(dir))) {
+		for (const vm of sec.vms) {
+			let grants = /** @type {Vm["grants"]} */ ([]);
+			try { grants = withHost(o.name, () => listGrants(vm.name)); } catch { /* an unreadable registration: its grants aren't shown */ }
+			if (grants.length) (vm.via ??= []).push({ name: o.name, grants });
+		}
+	}
 }
 
 /** One host's VMs; what the host says on stderr is kept as notes, not passed through (hosts are asked at
@@ -122,6 +143,7 @@ function status(vm) {
 	if (l) parts.push(l.state !== "leased" ? `pool ${l.state}` : `leased${l.holder ? ` by ${l.holder}` : ""}${l.expires_at ? `, ${left(l.expires_at)}` : ""}`);
 	if (vm.guest?.status === "outdated") parts.push(`outdated guest${vm.guest.reasons?.length ? ` (${vm.guest.reasons.join(", ")})` : ""}`);
 	if (vm.grants.length) parts.push(`grants ${vm.grants.map(lifecycle.grantLabel).join(",")}`);
+	for (const v of vm.via ?? []) parts.push(`grants (${v.name}) ${v.grants.map(lifecycle.grantLabel).join(",")}`);
 	return parts.join("; ") || "-";
 }
 

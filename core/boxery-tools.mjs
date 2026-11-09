@@ -46,7 +46,7 @@ export const VM_PARAM = { type: "string", description: "VM name (default: the cu
 export const HOST_PARAM = {
 	type: "string",
 	description: "Registered host name (see vm_info {action:\"hosts\"} for where each runs); default: this session's host. " +
-		"Names registered for the same profile directory (hosts shows same_as) are the same host.",
+		"Names that reach the same host-side profile (hosts shows same_as) are the same host, with the same VMs (grants stay per name).",
 };
 const SHOT = { screenshot: { type: "boolean", description: "Return a screenshot after the action (default true)" } };
 /** @param {Record<string, JsonSchema>} properties @param {string[]} [required] @returns {ObjectSchema} */
@@ -90,7 +90,7 @@ const INFO_OUTPUT = {
 					backend: { type: ["string", "null"], description: "VM backend (lima, libvirt, cloud-hypervisor, exe, boat, …) as recorded by `boxery setup` or `boxery --host NAME backend`; null if never recorded" },
 					current: { type: "boolean", description: "This session's host (used when host is omitted)" },
 					default: { type: "boolean", description: "The controller's default (default-host); new sessions start here unless started with another host" },
-					same_as: { type: "array", items: { type: "string" }, description: "Other names whose profile is the same directory, i.e. the same host and VMs" },
+					same_as: { type: "array", items: { type: "string" }, description: "Other names for the same host and VMs (the same profile directory, or the same destination and host-side profile)" },
 					dir: { type: "string", description: "Profile directory (config, ssh_config, grants)" },
 				},
 				required: ["name", "destination", "backend", "current", "default", "same_as", "dir"],
