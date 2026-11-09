@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 const HELPER = fileURLToPath(new URL("./copy-helper.mjs", import.meta.url));
 const args = process.argv.slice(2);
+const argv = [...args];
 let conf, vm;
 while (args.length > 1) {
 	const flag = /** @type {string} */ (args.shift());
@@ -18,7 +19,7 @@ if (!["alpha", "beta", "gamma"].includes(host) || !["vm", "other"].includes(/** 
 const endpoint = `${host}/${vm}`;
 const root = path.join(/** @type {string} */ (process.env.COPY_ROOT), "vms", host, /** @type {string} */ (vm));
 const script = args[0].replaceAll("/home/agent", root).replaceAll("/tmp/.boxery-copy-", `${root}/tmp/.boxery-copy-`);
-appendFileSync(/** @type {string} */ (process.env.COPY_LOG), JSON.stringify({ kind: "ssh", endpoint, script, pid: process.pid }) + "\n");
+appendFileSync(/** @type {string} */ (process.env.COPY_LOG), JSON.stringify({ kind: "ssh", endpoint, script, pid: process.pid, argv }) + "\n");
 const cleanup = script.includes('for record in "$t"/pgid.') && !script.includes("setsid -w");
 if (process.env.COPY_FAIL_CLEANUP === endpoint && cleanup) {
 	process.stderr.write("injected cleanup connection failure\n"); process.exit(255);
@@ -35,7 +36,9 @@ if (preparing && process.env.COPY_LATE_PREPARE === endpoint) {
 }
 if (preparing && process.env.COPY_SLOW_PREPARE === endpoint) await new Promise((r) => setTimeout(r, 200));
 /** @type {NodeJS.ProcessEnv} */
-const env = { ...process.env, COPY_ENDPOINT: endpoint, HOME: root };
+// A real sshd starts the remote command with a fresh environment; git push's ssh inherits git's
+// exec-path at the front of PATH, which FAKE_VM_PATH (when set) undoes.
+const env = { ...process.env, COPY_ENDPOINT: endpoint, HOME: root, ...(process.env.FAKE_VM_PATH ? { PATH: process.env.FAKE_VM_PATH } : {}) };
 if (process.env.COPY_SKIP_EXIT_SNAPSHOT === endpoint) env.BASH_ENV = path.join(/** @type {string} */ (process.env.COPY_ROOT), "no-exit-trap.sh");
 const child = spawn("bash", ["-c", script], { env, cwd: root, stdio: "inherit" });
 child.on("error", () => { process.exitCode = 255; });

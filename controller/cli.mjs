@@ -262,6 +262,23 @@ async function cmdCp(s, args) {
 	await copy(s.host, args);
 }
 
+/** sync NAME [--from DIR] [--to PATH] [--json]: vm_sync's own code. Needs only the profile's ssh_config. @param {Selected} s @param {string[]} args @returns {Promise<void>} */
+async function cmdSync(s, args) {
+	let name = "", from, to, json = false;
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i], v = args[i + 1];
+		if (a === "--from") { if (v == null) die("--from needs a directory"); from = v; i++; }
+		else if (a === "--to") { if (v == null) die("--to needs a path"); to = v; i++; }
+		else if (a === "--json") json = true;
+		else if (a.startsWith("-")) die(`unknown flag ${a}`);
+		else if (name) usage("sync");
+		else name = a;
+	}
+	needVm(name);
+	const { sync } = await import("./sync.mjs");
+	await sync(s.host, name, { from, to, json });
+}
+
 /** version [--json] @param {Selected | null} s @param {string[]} args */
 async function cmdVersion(s, args) {
 	const json = args[0] === "--json";
@@ -553,6 +570,20 @@ export const COMMANDS = {
 		},
 		status: {},
 		run: cmdCp,
+	},
+	sync: {
+		help: {
+			group: "use", summary: "push a local git checkout into a VM, so its tree matches exactly", usage: ["sync NAME [--from DIR] [--to PATH] [--json]"],
+			details: [
+				"git pushes the commits the VM lacks over its ssh connection, checks out the same commit (detached) and applies staged, unstaged and untracked changes, deletions included. Ignored files in the VM (node_modules, builds) stay. No git remote or GitHub access is needed on either side.",
+				"Refuses, changing nothing, when the VM checkout has changes the last sync didn't make, or the checkout holds a credential file (.env, .npmrc, auth files).",
+			],
+			flags: [["--from DIR", "Local checkout (default: the current directory)"], ["--to PATH", "VM directory (default ~/project; relative paths are under it)"], ["--json", "Print the result as JSON"]],
+			examples: [["This checkout into demo's ~/project", "boxery sync demo"], ["Another checkout, into ~/api (not inside ~/project, which is a checkout itself)", "boxery sync demo --from ../api --to ~/api"]],
+			seeAlso: ["cp"], docs: "sync.md",
+		},
+		status: { vm: true },
+		run: cmdSync,
 	},
 	desktop: {
 		help: { group: "use", summary: "open a VM's desktop in your browser (noVNC over ssh)", usage: ["desktop NAME [--no-open]"], flags: [["--no-open", "Print the URL instead of opening it"]], docs: "cli.md#desktop-and-ports" },

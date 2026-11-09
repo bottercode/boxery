@@ -9,7 +9,7 @@ There are two ways to run it:
 | | Runs on | Transport | Good for |
 |---|---|---|---|
 | **A. stdio** (recommended) | your laptop | stdin/stdout | Full features. Grants and `vm_copy local:` use your laptop. |
-| **B. HTTP** | the VM host | Streamable HTTP over Tailscale | Nothing to install on clients. `vm_copy local:` is off unless confined with `--copy-root`. |
+| **B. HTTP** | the VM host | Streamable HTTP over Tailscale | Nothing to install on clients. `vm_copy local:` and `vm_sync` are off unless confined with `--copy-root`. |
 
 ## A. stdio on your laptop
 
@@ -75,7 +75,9 @@ With `--copy-root DIR`, `local:` paths are confined to `DIR`:
 - Boxery's own state and the user's keys are refused even inside `DIR`, as is any path that contains them: `$BOXERY_CONF` and other `~/.config/boxery*` profiles, `~/.boxery` and registered profile directories, `~/.ssh`, `~/.gnupg`, `~/.pi`, and the `--token-file`. The server refuses to start if `DIR` is inside one of them.
 - A VM → local copy can create a new path or replace a file, but never merges into or replaces an existing directory: copy to a new path instead. It is extracted in a private staging directory (tar refuses absolute and `..` entries and writes through links within the archive), refused if it hard-links a file outside itself, and moved into place with `rename`, which replaces a symlink rather than following it. Symlinks inside a copied tree arrive as symlinks; later `local:` paths through them are checked like any other.
 
-The `initialize` instructions and the `vm_copy` description tell the agent which of the two applies. stdio mode is unchanged: there `local:` is your own machine. `--copy-root` confines it there too, if you want that.
+`vm_sync` ([sync](sync.md)) reads a local checkout, so it follows the same rule: refused over HTTP without `--copy-root`; with it, `from` resolves inside `DIR` and is checked the same way.
+
+The `initialize` instructions and the `vm_copy` and `vm_sync` descriptions tell the agent which of the two applies. stdio mode is unchanged: there `local:` is your own machine. `--copy-root` confines it there too, if you want that.
 
 ## Protocol features
 
@@ -177,7 +179,7 @@ commit outcome**, not rollback: reread before retrying.
 | `--vm NAME` | Default VM. Without it, the model picks one with `vm_manage {action:"use"}`, and tools fail closed when no `vm` is given. |
 | `--http ADDR:PORT` | Serve Streamable HTTP at `/mcp` instead of stdio. Each MCP session keeps its own current VM. |
 | `--token-file PATH` | Bearer token from a file instead of `$BOXERY_MCP_TOKEN` |
-| `--copy-root DIR` | Allow `vm_copy` `local:` paths, confined to `DIR` (see [B](#b-streamable-http-on-the-host-over-tailscale)). Over HTTP, `local:` is refused without it. |
+| `--copy-root DIR` | Allow `vm_copy` `local:` paths and `vm_sync` checkouts, confined to `DIR` (see [B](#b-streamable-http-on-the-host-over-tailscale)). Over HTTP, both are refused without it. |
 | `--allow-user LOGIN` | Also require this `Tailscale-User-Login` header (set by `tailscale serve`). Loopback binds only. Can be repeated. |
 | `--allow-origin ORIGIN` | Accept requests with this `Origin`. Foreign origins are rejected by default. |
 | `--no-auth` | Skip the bearer token. **Local testing only:** refused unless `--http` binds loopback (`127.0.0.1`, `::1`, `localhost`). |

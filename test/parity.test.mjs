@@ -19,6 +19,7 @@ const CLI_FOR_TOOL = {
 	vm_write: "cp",
 	vm_edit: none("people edit in their editor, over boxery ssh or after boxery cp"),
 	vm_copy: "cp",
+	vm_sync: "sync",
 	vm_screenshot: DESKTOP,
 	vm_click: DESKTOP,
 	vm_type: DESKTOP,
