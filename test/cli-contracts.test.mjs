@@ -49,6 +49,16 @@ test("every command has exactly one way to run, and a contract that says only wh
 	assert.deepEqual(contractOf("list"), contractOf("ls"), "an alias has its command's contract");
 });
 
+test("only host-wide listings opt into all-host dispatch, inherited by family actions", () => {
+	assert.deepEqual(commands.filter(([, , c]) => c.allHosts).map(([name]) => name).sort(),
+		["ls", "leases", "pool", "images", "version", "shapes", "capabilities", "backends", "upgrade-host", "runners"].sort());
+	for (const [family, action] of [["lease", "ls"], ["snapshot", "images"], ["host", "capabilities"], ["host", "backends"], ["host", "upgrade"]]) {
+		const entry = COMMANDS[family];
+		assert.ok("actions" in entry && entry.actions);
+		assert.equal(actionContract(entry.actions[action]).allHosts, true, `${family} ${action}`);
+	}
+});
+
 test("every family action runs a host command, or declares itself a registry action with its refusal", () => {
 	for (const [f, a, x, c] of actions) {
 		const label = `${f} ${a}`;

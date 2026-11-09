@@ -39,8 +39,8 @@ Command families (boxery FAMILY --help):
 
 More:
   pin NAME                              Re-pin a VM's ssh host key (VMs made before keys were pinned)
-  shapes                                VM sizes defined on the host (* = default)
-  version                               Controller and host versions; warns when the host is behind
+  shapes                                VM sizes on every host (* = default; --host NAME: one)
+  version                               Controller and every host's version; warns per host
 
 Options:
   --host NAME                           Run COMMAND on a host other than the default (boxery host use)

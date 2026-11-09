@@ -126,7 +126,7 @@ test("every family action does what its older spelling does: output, status, ssh
 			rmSync(sshLog, { force: true }); rmSync(path.join(root, "host.calls"), { force: true });
 			const r = run(args, extra);
 			// (a usage error names the command as it was typed: the families' own spelling is checked below)
-			return clockless({ r: { ...r, stderr: r.stderr.replace(/^boxery: usage: [\s\S]*$/, "boxery: usage: …") }, ssh: sshCalls(), host: calls().filter((c) => !c.endsWith(": help")), state: state() });
+			return clockless({ r: { ...r, stderr: r.stderr.replace(/^boxery: usage: [\s\S]*$/, "boxery: usage: …") }, ssh: sshCalls(), host: calls().filter((c) => !c.endsWith(": help")).sort(), state: state() });
 		};
 		const a = observe(family), b = observe(older);
 		assert.equal(a, b, `boxery ${family.join(" ")} differs from boxery ${older.join(" ")}`);
@@ -211,11 +211,9 @@ test("malformed actions say what the family has, before any host, ssh or saved s
 	assert.deepEqual(state(), before);
 });
 
-test("host: registry actions need no host and refuse --host; maintenance actions run on the selected host", () => {
-	// maintenance: the default host, or --host NAME's: never the other
+test("host: registry refuses --host; read-only checks list hosts; explicit maintenance stays selected", () => {
 	assert.equal(run(["host", "upgrade", "--check"]).status, 0);
-	assert.deepEqual(calls().map((c) => c.split(": ")[0]), [profile("alpha"), profile("alpha")]);
-	assert.deepEqual(calls().map((c) => c.split(": ")[1]), ["version --json", "upgrade --check"]);
+	assert.deepEqual(calls().sort(), [`${profile("alpha")}: upgrade --check`, `${profile("beta")}: upgrade --check`]);
 	rmSync(path.join(root, "host.calls"));
 	assert.equal(run(["--host", "beta", "host", "upgrade", "--check"]).status, 0);
 	assert.deepEqual(calls().map((c) => c.split(": ")[0]), [profile("beta"), profile("beta")]);

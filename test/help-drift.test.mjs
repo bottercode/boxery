@@ -227,6 +227,18 @@ test("seeAlso names commands; docs links point at real headings", () => {
 	}
 });
 
+test("all-host listing help explains how to retain one-host output", () => {
+	for (const name of ["leases", "images", "version", "shapes", "capabilities", "backends", "pool", "runners"]) {
+		const e = COMMANDS[name];
+		assert.ok("help" in e);
+		const details = (e.help.details ?? []).join(" ");
+		assert.match(details, /--host NAME/, name);
+		assert.match(details, /--json/, name);
+	}
+	assert.ok("help" in COMMANDS["upgrade-host"]);
+	assert.match(COMMANDS["upgrade-host"].help.details?.join(" ") ?? "", /--check lists every host/);
+});
+
 test("summaries are one short line", () => {
 	for (const [name, h] of everyHelp) {
 		assert.ok(h.summary.length <= 66, `${name}: summary over 66 characters; put the rest in details`);

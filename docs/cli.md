@@ -31,7 +31,7 @@ The everyday commands stay top level: `new`, `ls`, `start`, `stop`, `rm`, `resiz
 | `runners` | GitHub Actions runners | `once`, `status`, … |
 
 - **The same commands.** A family action runs its older spelling's code: same arguments and flags, output, `--json` fields, exit statuses and signals, and the same host selection. Older spellings keep working, without a warning, so scripts need no change. Only usage errors differ: they show the spelling you typed.
-- **`host` has two kinds of action.** `add`, `ls`, `show`, `use` and `rm` manage this machine's registry of hosts and refuse `--host`. `add NAME DEST` runs setup on its explicit destination; importing `--config-dir` and the other registry actions stay local. Maintenance actions (`build-base`, `upgrade`, `proxy-log`, `backend`, `backends`, `capabilities`) use the selected host, the default or `--host NAME`: `boxery --host lab host upgrade --check`.
+- **`host` has two kinds of action.** `add`, `ls`, `show`, `use` and `rm` manage this machine's registry of hosts and refuse `--host`. `add NAME DEST` runs setup on its explicit destination; importing `--config-dir` and the other registry actions stay local. Mutating maintenance actions (`build-base`, `upgrade`) and `proxy-log`/`backend` use the selected host, the default or `--host NAME`. Read-only `upgrade --check`, `backends` and `capabilities` list every host unless scoped: `boxery --host lab host upgrade --check`.
 - **`access ls` only lists.** It takes `NAME [--json]` and nothing else, so `access ls demo apply` is a usage error, not a push. Pushing the grants again is `access apply`. Grant approval is unchanged ([Grants](#grants)).
 - **`snapshot images`** lists the snapshots `new NAME --from VM@SNAP` can start from; it is not another kind of saved state. `fork` copies a VM's current disk; `snapshot create` saves one to come back to.
 - **Mistakes.** An unknown action names the family's actions (`unknown snapshot action: restroe (did you mean restore?); actions: …`) and exits 2, before any host, profile or grant is read.
@@ -50,16 +50,18 @@ boxery host show hornet
 boxery host use laptop
 boxery --host hornet ls
 boxery --host hornet lease acquire          # pool lease on that host
-boxery --host hornet host upgrade --check   # maintenance acts on the selected host
+boxery --host hornet host upgrade --check   # --host scopes this read-only check
 boxery host rm hornet                       # forget only; preserves VMs and profile data
 ```
 
 Without `--host`, `ls` lists every registered host's VMs under one header, a section each (the default host first, each headed by its name, backend and where it runs); names for the same host (`same_as` in `host ls --json`) are listed once, headed `(also NAME)`, with each name's grants. The hosts are asked at once; one that can't be reached shows `(ls failed: see below)`, its error follows the table on stderr, the others are still listed, and `ls` exits 1. `--host NAME ls` lists that host's alone, without a heading, and so does `ls` when only one host is registered. `ls --json` is always one host's VMs (the default's, or `--host NAME`'s). See [Named hosts](hosts.md) for isolation, imports, precedence and safe removal. `--host NAME` precedes the command and also scopes grants and lease keys.
 
+The read-only commands `lease ls`, `pool ls`, `version`, `shapes`, `host capabilities`, `host backends`, `host upgrade --check` and `runners status` also list every host without `--host`, using the same sections, default-first ordering and same-host deduplication as `ls`. `snapshot images` instead adds a `HOST` column to its table. Older spellings (`leases`, `images`, `capabilities`, `backends`, `upgrade-host --check`) behave identically. With only one host, output stays unchanged. `--host NAME` and `--json` always mean one host (the selected default for JSON without `--host`). Unreachable hosts do not hide the others: their errors follow the output on stderr and the command exits 1 once. `lease ls` reads local lease records only and does not contact hosts. `host upgrade --check` prints each host's report under its heading, without host-name prefixes. `version` prints the controller once, then each host's version, warning separately for each host that is behind. Real upgrades, mutating commands and commands taking a VM name remain on the selected host.
+
 ### Backend discovery
 
 `boxery host backends [--json]` lists backend platform support, requirements and capabilities.
-`boxery host capabilities [--json | --check]` assesses the selected **host**, not the controller.
+`boxery host capabilities [--json | --check]` assesses each **host**, not the controller; `--host NAME` or `--json` selects one.
 Both are also available as the top-level `backends` and `capabilities`, and directly as `boxery-host` commands. Agents use
 `vm_info {action:"capabilities"}`. See the [metadata contract](backends.md) for
 supported versus tested configurations and conditional features. Setup checks
@@ -101,7 +103,7 @@ boxery snapshot ls demo [--json]
 boxery snapshot restore demo before-refactor # VM keeps its name, address and token
 boxery new demo2 --from demo@before-refactor # a new VM from a snapshot
 boxery snapshot rm demo before-refactor
-boxery snapshot images [--json]              # every snapshot on the host (with AGE and GUEST, like ls)
+boxery snapshot images [--json]              # snapshots on every host (HOST, AGE and GUEST columns)
 ```
 
 `snap`, `snaps`, `revert`, `snap-rm` and `images` are the older spellings of `snapshot create`, `ls`, `restore`, `rm` and `images`, and do the same.
@@ -254,7 +256,7 @@ boxery host backend                          # the host's VM backend; recorded f
 boxery host upgrade [--check] [--ref REF]    # update boxery on the host (see Install → Upgrading)
 ```
 
-These `host` actions act on the selected host (`--host NAME`, else the default); `proxy-log`, `backend` and `upgrade-host` are the older spellings. `shapes` and `pin` stay top level.
+`proxy-log`, `backend` and real upgrades act on the selected host (`--host NAME`, else the default); `upgrade --check` lists every host unless scoped. `version` also lists every host unless `--host NAME` or `--json` is given; `proxy-log`, `backend` and `upgrade-host` are the older spellings. `shapes` and `pin` stay top level.
 
 ### Terminal status
 
@@ -342,8 +344,8 @@ Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit i
 | `boxery host upgrade [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services [→](install.md#upgrading) |
 | `boxery host proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host |
 | `boxery host backend` | The host's VM backend (recorded for host ls) |
-| `boxery host backends [--json]` | Backend support, requirements and capabilities [→](backends.md) |
-| `boxery host capabilities [--json \| --check]` | The selected host's platform and capabilities [→](backends.md) |
+| `boxery host backends [--json]` | Backend support and capabilities on every host [→](backends.md) |
+| `boxery host capabilities [--json \| --check]` | Every host's platform and capabilities (--host NAME: one) [→](backends.md) |
 
 **boxery snapshot — saved VM disk states: create, restore, list, delete**
 
@@ -353,7 +355,7 @@ Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit i
 | `boxery snapshot ls NAME [--json]` | List a VM's snapshots |
 | `boxery snapshot restore NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) |
 | `boxery snapshot rm NAME SNAP` | Delete a snapshot |
-| `boxery snapshot images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) |
+| `boxery snapshot images [--json]` | Snapshots on every host, with HOST column (--host NAME: one) |
 
 **boxery agent — persistent coding-agent sessions in a VM**
 
@@ -388,15 +390,15 @@ Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit i
 | `boxery lease acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) [→](pool.md) |
 | `boxery lease renew NAME [--ttl S]` | Extend your lease [→](pool.md) |
 | `boxery lease release NAME` | Give a leased VM back (it is reset to its clean snapshot) [→](pool.md) |
-| `boxery lease ls [--json]` | Your leases [→](pool.md) |
+| `boxery lease ls [--json]` | Your leases on every host (--host NAME: one) [→](pool.md) |
 
 **More**
 
 | Command | What it does |
 |---|---|
 | `boxery pin NAME [--from-guest]` | Re-pin a VM's ssh host key (VMs made before keys were pinned) [→](security.md#vm-host-keys) |
-| `boxery shapes [--json]` | VM sizes defined on the host (* = default) [→](shapes.md) |
-| `boxery version [--json]` | Controller and host versions; warns when the host is behind |
+| `boxery shapes [--json]` | VM sizes on every host (* = default; --host NAME: one) [→](shapes.md) |
+| `boxery version [--json]` | Controller and every host's version; warns per host |
 
 **Older spellings (still work; the same commands as the family actions)**
 
@@ -407,7 +409,7 @@ Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit i
 | `boxery snaps NAME [--json]` | List a VM's snapshots (= snapshot ls) |
 | `boxery revert NAME SNAP` | Restore a VM to a snapshot (keeps its name, address and token) (= snapshot restore) |
 | `boxery snap-rm NAME SNAP` | Delete a snapshot (= snapshot rm) |
-| `boxery images [--json]` | Every snapshot on the host (new NAME --from VM@SNAP uses one) (= snapshot images) |
+| `boxery images [--json]` | Snapshots on every host, with HOST column (--host NAME: one) (= snapshot images) |
 | `boxery sessions NAME [--json]` | List a VM's tmux sessions (= agent ls) |
 | `boxery jobs NAME [--json]`<br>`boxery jobs NAME --prune [--older-than 7d] [--json]` | List background jobs (run --bg starts one) (= job ls) [→](#background-command-jobs) |
 | `boxery logs NAME JOB [-f] [--lines N] [--bytes N] [--strip-ansi]` | Show a job's output (the last 200 lines) (= job logs) [→](#background-command-jobs) |
@@ -420,10 +422,10 @@ Generated from the help `boxery help --all` shows (`controller/cli.mjs`); edit i
 | `boxery acquire [--ttl S] [--wait S] [--holder H]` | Lease a VM from the shared pool (prints NAME LEASE_ID) (= lease acquire) [→](pool.md) |
 | `boxery renew NAME [--ttl S]` | Extend your lease (= lease renew) [→](pool.md) |
 | `boxery release NAME` | Give a leased VM back (it is reset to its clean snapshot) (= lease release) [→](pool.md) |
-| `boxery leases [--json]` | Your leases (= lease ls) [→](pool.md) |
+| `boxery leases [--json]` | Your leases on every host (--host NAME: one) (= lease ls) [→](pool.md) |
 | `boxery upgrade-host [--check] [--ref REF] [--wait S] [--reinit]` | Update boxery on the host and restart its services (= host upgrade) [→](install.md#upgrading) |
-| `boxery backends [--json]` | Backend support, requirements and capabilities (= host backends) [→](backends.md) |
-| `boxery capabilities [--json \| --check]` | The selected host's platform and capabilities (= host capabilities) [→](backends.md) |
+| `boxery backends [--json]` | Backend support and capabilities on every host (= host backends) [→](backends.md) |
+| `boxery capabilities [--json \| --check]` | Every host's platform and capabilities (--host NAME: one) (= host capabilities) [→](backends.md) |
 | `boxery backend` | The host's VM backend (recorded for host ls) (= host backend) |
 | `boxery proxy-log [N]` | Recent LLM and edge (http: grant) requests on the host (= host proxy-log) |
 

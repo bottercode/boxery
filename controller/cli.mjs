@@ -319,7 +319,8 @@ async function cmdSsh(s, [name = "", ...rest]) {
  *    selected; `registry` (a family action only) edits this machine's registry, though `host add DEST` contacts DEST.
  *  - noHost: the refusal when --host is given to a command that has no host to select.
  *  - hostOptional: with no --host and no default host, `local` runs instead of a handler needing a host.
- *  - allHosts: without --host, the handler lists every host (it is told: its third argument).
+ *  - allHosts: without --host, read-only text listings span hosts (all-hosts.mjs; ls uses its third argument).
+ *    JSON, VM-name commands and mutating actions retain their selected-host handlers.
  *  - vmAtHost: the first word may be NAME@HOST, which selects HOST like --host.
  *  - help: how -h/--help is told from payload. `legacy`: a leading flag, or one word then the flag (snap demo
  *    --help). `leading`: only a leading flag; after that the words are the command's (run demo --help). `self`:
@@ -491,7 +492,8 @@ export const COMMANDS = {
 		},
 	},
 	shapes: {
-		help: { group: "more", summary: "VM sizes defined on the host (* = default)", usage: ["shapes [--json]"], flags: [JSON_FLAG], docs: "shapes.md" },
+		contract: { allHosts: true },
+		help: { group: "more", summary: "VM sizes on every host (* = default; --host NAME: one)", usage: ["shapes [--json]"], details: ["A section per host. --host NAME or --json selects one host."], flags: [JSON_FLAG], docs: "shapes.md" },
 		run: async (s, args) => { needHost(s); if (!(args.length === 0 || (args.length === 1 && args[0] === "--json"))) usage("shapes"); await hostPass(s, ["shapes", ...args]); },
 	},
 
@@ -524,7 +526,8 @@ export const COMMANDS = {
 		},
 	},
 	images: {
-		help: { group: "legacy", summary: "every snapshot on the host (new NAME --from VM@SNAP uses one)", usage: ["images [--json]"], flags: [JSON_FLAG] },
+		contract: { allHosts: true },
+		help: { group: "legacy", summary: "snapshots on every host, with HOST column (--host NAME: one)", usage: ["images [--json]"], details: ["Snapshots usable by new NAME --from VM@SNAP, with a HOST column. --host NAME or --json selects one host, without the extra column."], flags: [JSON_FLAG] },
 		run: async (s, args) => hostPass(s, ["images", ...args]),
 	},
 
@@ -740,7 +743,8 @@ export const COMMANDS = {
 		run: async (s, args) => { needHost(s); await (await import("./leases.mjs")).leaseCommand(s, "release", args); },
 	},
 	leases: {
-		help: { group: "legacy", summary: "your leases", usage: ["leases [--json]"], flags: [JSON_FLAG], docs: "pool.md" },
+		contract: { allHosts: true },
+		help: { group: "legacy", summary: "your leases on every host (--host NAME: one)", usage: ["leases [--json]"], details: ["Locally held leases, a section per host; no host is contacted. --host NAME or --json selects one host."], flags: [JSON_FLAG], docs: "pool.md" },
 		run: async (s, args) => (await import("./leases.mjs")).leaseCommand(s, "leases", args),
 	},
 	lease: {
@@ -753,15 +757,17 @@ export const COMMANDS = {
 		actions: { acquire: { command: "acquire" }, renew: { command: "renew" }, release: { command: "release" }, ls: { command: "leases" } },
 	},
 	pool: {
-		help: { group: "families", summary: "manage the shared pool of leasable VMs (admin)", usage: ["pool add NAME", "pool rm NAME [--force]", "pool ls [--json]"], list: "pool add|rm|ls", docs: "pool.md" },
+		contract: { allHosts: true },
+		help: { group: "families", summary: "manage the shared pool of leasable VMs (admin)", details: ["ls lists every host unless --host NAME or --json is given. add and rm stay on the selected host."], usage: ["pool add NAME", "pool rm NAME [--force]", "pool ls [--json]"], list: "pool add|rm|ls", docs: "pool.md" },
 		status: { vm: 1, when: (a) => a[0] === "add" }, // add captures the VM's clean snapshot (a restart on Lima); rm and ls are quick
 		run: async (s, args) => { needHost(s); await lc(() => lifecycle.pool(args, passthrough())); },
 	},
 	runners: {
+		contract: { allHosts: true },
 		help: {
 			group: "families", summary: "GitHub Actions runners on pool VMs", list: "runners once|status|...",
 			usage: ["runners once [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--labels L,...] [--group ID]", "runners status [--json] | start | stop | token < FILE", "runners config [--repo OWNER/REPO | --org ORG] [--vms NAME,...] [--count N] [--labels L,...] ..."],
-			details: ["once: a local runner. One job on a fresh pool VM, registered with your gh login; nothing is stored on the host. --repo defaults to this directory's repo.", "status, start, stop, config, token: host runners (admin). The host keeps runners waiting, with its own GitHub token."],
+			details: ["once: a local runner. One job on a fresh pool VM, registered with your gh login; nothing is stored on the host. --repo defaults to this directory's repo.", "status, start, stop, config, token: host runners (admin). The host keeps runners waiting, with its own GitHub token. status lists every host unless --host NAME or --json is given; other actions stay on the selected host."],
 			docs: "github-runners.md",
 		},
 		// GitHub Actions runners on the host's pool (docs/github-runners.md): `once` (local runners) runs here with
@@ -776,15 +782,16 @@ export const COMMANDS = {
 
 	// ------------------------------------------------ host & diagnostics
 	version: {
-		help: { group: "more", summary: "controller and host versions; warns when the host is behind", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version."], flags: [JSON_FLAG], seeAlso: ["host upgrade"] },
+		help: { group: "more", summary: "controller and every host's version; warns per host", usage: ["version [--json]"], details: ["boxery --version and boxery -V are the same as boxery version. --host NAME or --json selects one host; otherwise each host has a section after the controller."], flags: [JSON_FLAG], seeAlso: ["host upgrade"] },
 		run: async (s, args) => cmdVersion(s, args),
 		local: (args) => cmdVersion(null, args),
-		contract: { hostOptional: true },
+		contract: { hostOptional: true, allHosts: true },
 	},
 	"upgrade-host": {
+		contract: { allHosts: true },
 		help: {
 			group: "legacy", summary: "update boxery on the host and restart its services", usage: ["upgrade-host [--check] [--ref REF] [--wait S] [--reinit]"],
-			details: ["Waits for in-flight VM operations and rolls back if checks fail."],
+			details: ["Waits for in-flight VM operations and rolls back if checks fail. --check lists every host unless --host NAME is given; real upgrades stay on the selected host."],
 			flags: [["--check", "Only report the install, its target version and profiles"], ["--ref REF", "Upgrade to this git ref or npm version"], ["--wait S", "Wait up to S seconds for in-flight operations"], ["--reinit", "Re-run init for every profile even when up to date"]],
 			docs: "install.md#upgrading",
 		},
@@ -792,11 +799,13 @@ export const COMMANDS = {
 		run: cmdUpgradeHost,
 	},
 	backends: {
-		help: { group: "legacy", summary: "backend support, requirements and capabilities", usage: ["backends [--json]"], flags: [JSON_FLAG], docs: "backends.md" },
+		contract: { allHosts: true },
+		help: { group: "legacy", summary: "backend support and capabilities on every host", usage: ["backends [--json]"], details: ["Requirements and capability declarations, a section per host. --host NAME or --json selects one host."], flags: [JSON_FLAG], docs: "backends.md" },
 		run: async (s, args) => hostPass(s, ["backends", ...args]),
 	},
 	capabilities: {
-		help: { group: "legacy", summary: "the selected host's platform and capabilities", usage: ["capabilities [--json | --check]"], flags: [JSON_FLAG, ["--check", "Run the backend preflight; fails when a requirement is missing"]], docs: "backends.md" },
+		contract: { allHosts: true },
+		help: { group: "legacy", summary: "every host's platform and capabilities (--host NAME: one)", usage: ["capabilities [--json | --check]"], details: ["A section per host, including --check. --host NAME or --json selects one host."], flags: [JSON_FLAG, ["--check", "Run the backend preflight; fails when a requirement is missing"]], docs: "backends.md" },
 		run: async (s, args) => hostPass(s, ["capabilities", ...args]),
 	},
 	backend: {
@@ -922,13 +931,20 @@ async function main(argv) {
 		}
 	}
 	const entry = COMMANDS[cmd];
-	// Plain `ls` lists every host; --host NAME ls just that one.
+	// All-host text listings retain the original path with --host or --json.
 	const command = "run" in entry ? entry.run : undefined;
 	if (!command) throw new CliError(unknownCommand(COMMANDS, word), 2);
 	const s = await select(name, dir);
 	await withHost(s.host, async () => {
 		await refreshSshConfig({ host: s.host, warn: note });
-		await reporting(cmd, "status" in entry ? entry.status : undefined, args, () => command(s, args, { allHosts: !!contract.allHosts && !explicit }));
+		await reporting(cmd, "status" in entry ? entry.status : undefined, args, async () => {
+			const allHosts = !!contract.allHosts && !explicit;
+			if (allHosts && cmd !== "ls") {
+				const listings = await import("./all-hosts.mjs");
+				if (listings.isListing(cmd, args) && await listings.allHostsListing(s, cmd, args)) return;
+			}
+			return command(s, args, { allHosts });
+		});
 	});
 }
 
