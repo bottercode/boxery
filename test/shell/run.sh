@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# Run all offline shell tests, in parallel. BASH_UNDER_TEST=/path/to/bash runs them under another bash
-# (e.g. 3.2); JOBS=N caps how many run at once (default: the CPU count). Each test's output is printed
-# whole once it finishes, in list order. Tests must keep their state in their own mktemp -d.
-# SKIP="a.sh b.sh" leaves those files out (CI's macOS job runs only what macOS can break).
+# Run the offline shell tests, in parallel: run.sh [DIR...], every directory by default. Where a test lives
+# says where it has to run:
+#   common/  code that runs on macOS and Linux and can differ between them (shims, controller, the Lima,
+#            exe and boat backends, launchd paths): every OS, macOS included
+#   linux/   code that only runs on Linux (the libvirt and Cloud Hypervisor backends, systemd units)
+#   logic/   Node logic driven through the fake backend: the same on any OS, so CI runs it on Linux only
+# BASH_UNDER_TEST=/path/to/bash runs them under another bash (e.g. 3.2); JOBS=N caps how many run at once
+# (default: the CPU count). Each test's output is printed whole once it finishes, in start order. Tests
+# must keep their state in their own mktemp -d.
 # This script itself runs under bash 3.2 on macOS, so no wait -n: it polls for finished tests.
 set -euo pipefail
 cd "$(dirname "$0")"
 B=${BASH_UNDER_TEST:-bash}
 JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}
 [ "$JOBS" -ge 1 ] || JOBS=1
-all=" host-exe-backend.sh host-boat-backend.sh controller-local.sh controller-runners-once.sh host-patch.sh host-leases.sh host-dispatcher.sh host-upgrade.sh host-ch-backend.sh host-output.sh host-images.sh host-shapes.sh host-init.sh controller-hosts.sh controller-hostkeys.sh host-runners.sh host-lima-backend.sh host-libvirt-backend.sh controller-config.sh backend-recovery.sh "
-# a name SKIP doesn't know is a typo or a renamed test: fail rather than quietly run it
-for t in ${SKIP:-}; do
-	case $all in *" $t "*) ;; *) echo "SKIP names $t, which isn't a shell test" >&2; exit 2 ;; esac
+[ $# -gt 0 ] || set -- */
+files=()
+for d in "$@"; do
+	d=${d%/}
+	[ -d "$d" ] || { echo "run.sh: no test directory $d (have: $(echo */ | tr -d /))" >&2; exit 2; }
+	for t in "$d"/*.sh; do [ -f "$t" ] && files+=("$t"); done
 done
+[ ${#files[@]} -gt 0 ] || { echo "run.sh: no tests in $*" >&2; exit 2; }
 tests=()
-# Slowest first, so a long test doesn't start last.
-for t in $all; do
-	case " ${SKIP:-} " in *" $t "*) echo "-- $t skipped (SKIP)"; continue ;; esac
-	[ -f "$t" ] && tests+=("$t")
-done
+# Longest file first, a stand-in for slowest, so a long test doesn't start last.
+while read -r _ t; do tests+=("$t"); done < <(for t in "${files[@]}"; do awk 'END { print NR, FILENAME }' "$t"; done | sort -rn)
 ver=$("$B" -c 'echo $BASH_VERSION')
 out=$(mktemp -d)
 # A tripwire in front of this machine's launchctl and systemctl: tests stub them (their stubs come first on
@@ -27,9 +32,11 @@ out=$(mktemp -d)
 # test that misses a stub would replace the user's own services (one replaced dev.boxery-proxy).
 trip=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$out" "$trip"' EXIT
+# logs and tripwire records are kept by test path, so each test's directory is made in both
+for t in "${tests[@]}"; do mkdir -p "$out/${t%/*}" "$trip/reached/${t%/*}"; done
 for c in launchctl systemctl; do
 	command -v "$c" >/dev/null || continue   # absent here: keep it absent
-	printf '#!/bin/sh\necho "%s $*" >>"%s/reached.${BOXERY_TEST_FILE:-unknown}"\necho "test reached the real %s (stub it)" >&2\nexit 97\n' "$c" "$trip" "$c" >"$trip/$c"
+	printf '#!/bin/sh\necho "%s $*" >>"%s/reached/${BOXERY_TEST_FILE:-unknown}"\necho "test reached the real %s (stub it)" >&2\nexit 97\n' "$c" "$trip" "$c" >"$trip/$c"
 	chmod +x "$trip/$c"
 done
 export PATH="$trip:$PATH"
@@ -48,16 +55,16 @@ flush() {
 		t=${tests[$next]}; read -r trc secs <"$out/$t.done"
 		echo "== $t ($ver, ${secs}s)"; cat "$out/$t.log"
 		[ "$trc" = 0 ] || { echo "!! $t exited $trc"; rc=1; }
-		if [ -s "$trip/reached.$t" ]; then
-			echo "  ✗ $t reached the real service manager:"; sed 's/^/    /' "$trip/reached.$t"; rc=1
+		if [ -s "$trip/reached/$t" ]; then
+			echo "  ✗ $t reached the real service manager:"; sed 's/^/    /' "$trip/reached/$t"; rc=1
 		fi
 		next=$((next + 1))
 	done
 }
 # A process that lost BOXERY_TEST_FILE still trips the wire: which test is unknown, but the run fails.
 unknown() {
-	if [ -s "$trip/reached.unknown" ]; then
-		echo "  ✗ a test reached the real service manager:"; sed 's/^/    /' "$trip/reached.unknown"; rm "$trip/reached.unknown"; rc=1
+	if [ -s "$trip/reached/unknown" ]; then
+		echo "  ✗ a test reached the real service manager:"; sed 's/^/    /' "$trip/reached/unknown"; rm "$trip/reached/unknown"; rc=1
 	fi
 }
 running() {

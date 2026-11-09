@@ -57,11 +57,8 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - run: /bin/bash --version | head -1
-      # Skipped: Linux-only backends (ch, libvirt), and tests of Node logic through the fake backend,
-      # whose host-side Bash (the boxery-host shim, backend.sh) host-dispatcher.sh still covers here.
-      - run: BASH_UNDER_TEST=/bin/bash /bin/bash test/shell/run.sh
-        env:
-          SKIP: host-ch-backend.sh host-libvirt-backend.sh host-leases.sh host-patch.sh host-output.sh host-images.sh host-shapes.sh
+      # common/ only: linux/ is Linux-only code, logic/ runs the same on any OS (test/shell/run.sh)
+      - run: BASH_UNDER_TEST=/bin/bash /bin/bash test/shell/run.sh common
 
   macos-node:
     runs-on: macos-latest
