@@ -551,6 +551,7 @@ export const COMMANDS = {
 			examples: [["This checkout into demo's ~/project", "boxery sync demo"], ["Another checkout, into ~/api (not inside ~/project, which is a checkout itself)", "boxery sync demo --from ../api --to ~/api"]],
 			seeAlso: ["cp"], docs: "sync.md",
 		},
+		status: { vm: true },
 		run: cmdSync,
 	},
 	desktop: {

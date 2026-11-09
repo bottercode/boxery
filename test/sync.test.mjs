@@ -2,7 +2,7 @@
 // "VM" is a directory, and its ssh runs scripts there with /home/agent mapped to it. No real VMs.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -54,7 +54,8 @@ function tree(root) {
 }
 
 beforeEach(() => {
-	dir = mkdtempSync(path.join(tmpdir(), "boxery-sync-"));
+	// Match the canonical --copy-root used by servers (macOS's temp directory is under /var → /private/var).
+	dir = realpathSync(mkdtempSync(path.join(tmpdir(), "boxery-sync-")));
 	mkdirSync(path.join(dir, "bin"));
 	const home = path.join(dir, "home");
 	mkdirSync(path.join(home, "host-registry"), { recursive: true });
@@ -68,9 +69,11 @@ beforeEach(() => {
 	writeFileSync(path.join(dir, "calls"), "");
 	writeFileSync(path.join(dir, "bin", "ssh"), `#!/usr/bin/env bash\nexec ${q(process.execPath)} ${q(path.join(FIXTURES, "copy-ssh.mjs"))} "$@"\n`, { mode: 0o755 });
 	writeFileSync(path.join(dir, "bin", "tar"), `#!/usr/bin/env bash\nexec ${q(process.execPath)} ${q(path.join(FIXTURES, "copy-tar.mjs"))} "$@"\n`, { mode: 0o755 });
+	// sync deliberately strips caller GIT_* overrides; isolate system config at the executable boundary.
+	writeFileSync(path.join(dir, "bin", "git"), `#!/usr/bin/env bash\nexport GIT_CONFIG_NOSYSTEM=1\nexec ${q(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim())} "$@"\n`, { mode: 0o755 });
 	writeFileSync(path.join(dir, "bin", "setsid"), "#!/usr/bin/env bash\n[ \"$1\" != -w ] || shift\nexec perl -e 'setpgrp(0,0); exec @ARGV or die' -- \"$@\"\n", { mode: 0o755 });
 	env = {
-		...process.env, ...GIT_ENV, HOME: home, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, BOXERY_HOME: home,
+		...process.env, ...GIT_ENV, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, BOXERY_HOME: home,
 		COPY_ROOT: dir, COPY_LOG: path.join(dir, "calls"), REAL_TAR: execFileSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).trim(),
 		REAL_GIT: execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
 	};
