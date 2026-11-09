@@ -279,8 +279,12 @@ it("reaper cannot change an acquiring generation while key installation owns the
 	const acquire = run(["acquire", "--holder", "alice"], { BOXERY_TEST_KEY_PAUSE: "1" }, KEY);
 	await until(() => existsSync(barrier("pool", "key")));
 	const before = L.get(db, "pool"); assert.equal(before.state, "ACQUIRING");
-	const reap = run(["reap"], { BOXERY_NOW: String(Math.floor(Date.now() / 1000) + 4000) });
-	await pause(250);
+	const waiting = path.join(dir, "reap.waiting");
+	const reap = run(["reap"], { BOXERY_NOW: String(Math.floor(Date.now() / 1000) + 4000), BOXERY_TEST_LOCK_WAIT: waiting });
+	// Wait until reap has read the ACQUIRING row as a candidate and queued for its lock. A reap that reads
+	// only after the commit sees a lease already expired by its clock and rightly resets it.
+	await until(() => existsSync(waiting) && readFileSync(waiting, "utf8") !== "");
+	assert.equal(readFileSync(waiting, "utf8"), "_reap_candidate pool\n");
 	assert.equal(L.get(db, "pool").gen, before.gen);
 	assert.equal(reap.exitCode, null);
 	release("pool", "key");
