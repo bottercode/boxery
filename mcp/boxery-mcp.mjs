@@ -12,7 +12,7 @@
 // "local" (vm_copy) and grant sources are the machine this server runs on. Over HTTP that is the
 // control plane, so vm_copy local: endpoints and vm_sync are refused unless --copy-root confines them.
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import http from "node:http";
 import * as core from "../core/boxery-core.mjs";
 import { HOST_PARAM, runTool, sameHost, TOOLS as SHARED_TOOLS, VM_PARAM } from "../core/boxery-tools.mjs";
@@ -403,13 +403,40 @@ const sha256 = (/** @type {string} */ s) => createHash("sha256").update(s).diges
 /** Constant-time string compare: equal-length digests, so neither the length nor the content leaks through timing. */
 const secretEquals = (/** @type {unknown} */ got, /** @type {unknown} */ want) => typeof got === "string" && typeof want === "string" && timingSafeEqual(sha256(got), sha256(want));
 
+/**
+ * The current bearer token: $BOXERY_MCP_TOKEN, or --token-file read again whenever the file changes (a stat
+ * per request, as the proxy does for tokens.json), so rotating it revokes the old token without a restart.
+ * A missing or empty file gives no token, and every request is refused until it is fixed.
+ * @returns {() => string | undefined}
+ */
+function tokenSource() {
+	const file = TOKEN_FILE;
+	if (!file) {
+		const token = process.env.BOXERY_MCP_TOKEN;
+		return () => token;
+	}
+	/** @type {{ key: string, token: string | undefined } | null} */
+	let cache = null;
+	return () => {
+		try {
+			const st = statSync(file, { bigint: true });
+			const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+			if (cache?.key !== key) cache = { key, token: readFileSync(file, "utf8").trim() || undefined };
+			return cache.token;
+		} catch {
+			cache = null;
+			return undefined;
+		}
+	};
+}
+
 /** @param {string} listen */
 function serveHttp(listen) {
 	const [hostPart, portPart] = listen.includes(":") ? [listen.slice(0, listen.lastIndexOf(":")), listen.slice(listen.lastIndexOf(":") + 1)] : ["127.0.0.1", listen];
-	const token = TOKEN_FILE ? readFileSync(TOKEN_FILE, "utf8").trim() : process.env.BOXERY_MCP_TOKEN;
+	const token = tokenSource();
 	const noAuth = has("--no-auth");
-	if (!token && !noAuth) {
-		log("refusing to start: set BOXERY_MCP_TOKEN or --token-file (or --no-auth for local testing)");
+	if (!token() && !noAuth) {
+		log(`refusing to start: ${TOKEN_FILE ? `--token-file ${TOKEN_FILE} is missing or empty` : "set BOXERY_MCP_TOKEN or --token-file"} (or --no-auth for local testing)`);
 		process.exit(2);
 	}
 	if (noAuth && !LOOPBACK.includes(hostPart)) {
@@ -438,7 +465,8 @@ function serveHttp(listen) {
 			// DNS-rebinding guard: browsers send Origin; reject unknown ones.
 			const origin = req.headers.origin;
 			if (origin && !allowOrigins.includes(origin)) return send(403, { error: `origin not allowed: ${origin}` });
-			if (!noAuth && !secretEquals(req.headers.authorization, `Bearer ${token}`)) return send(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+			const current = noAuth ? undefined : token();
+			if (!noAuth && (!current || !secretEquals(req.headers.authorization, `Bearer ${current}`))) return send(401,{ error: "unauthorized" }, { "www-authenticate": "Bearer" });
 			if (allowUsers.length) {
 				// Set by `tailscale serve` for requests from tailnet users (absent for tagged devices).
 				const who = req.headers["tailscale-user-login"];

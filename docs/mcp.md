@@ -178,7 +178,7 @@ commit outcome**, not rollback: reread before retrying.
 | `--host NAME` | Registered startup host (otherwise the controller default). Each HTTP session keeps its own host and VM. |
 | `--vm NAME` | Default VM. Without it, the model picks one with `vm_manage {action:"use"}`, and tools fail closed when no `vm` is given. |
 | `--http ADDR:PORT` | Serve Streamable HTTP at `/mcp` instead of stdio. Each MCP session keeps its own current VM. |
-| `--token-file PATH` | Bearer token from a file instead of `$BOXERY_MCP_TOKEN` |
+| `--token-file PATH` | Bearer token from a file instead of `$BOXERY_MCP_TOKEN`. The file is read again when it changes, so writing a new token there revokes the old one at the next request, without a restart. While the file is missing or empty, every request is refused. |
 | `--copy-root DIR` | Allow `vm_copy` `local:` paths and `vm_sync` checkouts, confined to `DIR` (see [B](#b-streamable-http-on-the-host-over-tailscale)). Over HTTP, both are refused without it. |
 | `--allow-user LOGIN` | Also require this `Tailscale-User-Login` header (set by `tailscale serve`). Loopback binds only. Can be repeated. |
 | `--allow-origin ORIGIN` | Accept requests with this `Origin`. Foreign origins are rejected by default. |

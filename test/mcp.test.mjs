@@ -2,7 +2,7 @@
 // (in a temp "VM home"), and a stub boxery-host answers controller operations.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -846,6 +846,43 @@ describe("http", () => {
 		} finally {
 			q.kill();
 		}
+	});
+
+	test("--token-file is read again when it changes: rotating it revokes the old token without a restart", async () => {
+		const tdir = mkdtempSync(path.join(tmpdir(), "boxery-mcp-token-"));
+		const file = path.join(tdir, "token");
+		// Rotate the way an operator would: write a new file and rename it into place.
+		const rotate = (/** @type {string} */ value) => {
+			writeFileSync(`${file}.new`, value, { mode: 0o600 });
+			renameSync(`${file}.new`, file);
+		};
+		rotate("first-token\n");
+		const tport = 20000 + Math.floor(Math.random() * 20000);
+		const q = spawn(process.execPath, [SERVER, "--http", `127.0.0.1:${tport}`, "--vm", "fakevm", "--token-file", file], { env: { ...env, BOXERY_MCP_TOKEN: "" }, stdio: "ignore" });
+		const status = async (/** @type {string} */ t) =>
+			(await fetch(`http://127.0.0.1:${tport}/mcp`, { method: "POST", headers: { ...H, authorization: `Bearer ${t}` }, body: JSON.stringify(init) })).status;
+		try {
+			let up = false;
+			for (let i = 0; i < 50 && !up; i++) {
+				up = await fetch(`http://127.0.0.1:${tport}/healthz`).then((r) => r.ok, () => false);
+				if (!up) await new Promise((r) => setTimeout(r, 100));
+			}
+			assert.ok(up, "http server did not start");
+			assert.equal(await status("first-token"), 200);
+			rotate("second-token\n");
+			assert.equal(await status("first-token"), 401, "the old token stops working at once");
+			assert.equal(await status("second-token"), 200, "the new token works without a restart");
+			rmSync(file);
+			assert.equal(await status("second-token"), 401, "a missing token file refuses everything");
+			assert.equal(await status("undefined"), 401, "including a guess at an unset token");
+			writeFileSync(file, "\n");
+			assert.equal(await status("second-token"), 401, "so does an empty one");
+		} finally {
+			q.kill();
+			rmSync(tdir, { recursive: true, force: true });
+		}
+		const missing = spawn(process.execPath, [SERVER, "--http", "127.0.0.1:1", "--token-file", path.join(tdir, "nope")], { env: { ...env, BOXERY_MCP_TOKEN: "" }, stdio: "ignore" });
+		assert.equal(await new Promise((r) => missing.on("exit", r)), 2, "refuses to start without a readable token file");
 	});
 
 	test("auth: token required, Tailscale user allowlist, Origin check", async () => {
