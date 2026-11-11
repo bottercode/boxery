@@ -466,7 +466,7 @@ function serveHttp(listen) {
 			const origin = req.headers.origin;
 			if (origin && !allowOrigins.includes(origin)) return send(403, { error: `origin not allowed: ${origin}` });
 			const current = noAuth ? undefined : token();
-			if (!noAuth && (!current || !secretEquals(req.headers.authorization, `Bearer ${current}`))) return send(401,{ error: "unauthorized" }, { "www-authenticate": "Bearer" });
+			if (!noAuth && (!current || !secretEquals(req.headers.authorization, `Bearer ${current}`))) return send(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
 			if (allowUsers.length) {
 				// Set by `tailscale serve` for requests from tailnet users (absent for tagged devices).
 				const who = req.headers["tailscale-user-login"];
